@@ -57,11 +57,46 @@ Known limits, so a failure is diagnosed rather than re-investigated:
 - **claude.ai chat has no git.** It cannot clone anything. On that surface this
   skill cannot work, and the rules have to be pasted by hand. Say that rather
   than improvising.
-- **Cowork can clone and pull, but cannot push.** Reading is what this skill
-  needs, so it works there — verified 2026-08-29. If a *push* fails in Cowork,
-  that is expected and documented; it is not this skill's problem.
+- **A bare Cowork session has no credential for a private repo by default, and
+  the GitHub connector will not save you — it is separately broken.** No
+  `gh` CLI, no SSH key, `GITHUB_TOKEN` (if set) is a placeholder string not a
+  real token, and even if Garrett has GitHub Integration showing "Connected" in
+  Settings → Connectors, it does not appear in Cowork's own per-chat "Add
+  connector" list, unlike Gmail/Calendar/Drive/Spotify — a known, long-open
+  Anthropic bug (GitHub's MCP server doesn't support the OAuth flow Cowork's
+  connector auto-auth needs; tracked in
+  [`anthropics/claude-code#59854`](https://github.com/anthropics/claude-code/issues/59854)
+  and five other issues, verified 2026-08-29). **Do not suggest "turn on the
+  GitHub connector" as the fix — it will not show up to turn on.** The clone
+  in step 1 will instead fail with `fatal: could not read Username for
+  'https://github.com': terminal prompts disabled` until a human supplies a
+  credential — verified 2026-08-29 by cloning the *public* `claude-bootstrap`
+  repo with the identical command and no auth needed in the same container,
+  isolating the failure to "no credential," not a broken git setup. **Say
+  this plainly rather than retrying the same clone command or the connector.**
+  If Garrett is in the chat, ask him to paste a GitHub personal access token;
+  splice it into the clone URL for that one command
+  (`https://x-access-token:<PAT>@github.com/...`) rather than writing it to git
+  config, so it is not left sitting in a file.
+- **Push from Cowork is walled off by a known, open Anthropic bug — not a
+  design choice, and not fixable with a better credential.** Verified
+  2026-08-29: even with a working PAT that made the clone succeed, push was
+  refused with `remote: access denied by the git proxy: <repo> is not in this
+  session's authorized repository set`. This is tracked publicly and
+  unresolved: [`anthropics/claude-code#76248`](https://github.com/anthropics/claude-code/issues/76248)
+  (opened 2026-07-10, reproduced) and
+  [`anthropics/claude-code#84581`](https://github.com/anthropics/claude-code/issues/84581)
+  (opened 2026-08-06, broader — some sessions can't read *any* repo). Both
+  errors tell the agent to call `add_repo` or "add the repository to the
+  session's sources" — **no such tool or UI exists inside a Cowork session.**
+  Do not spend a session debugging this or trying more credential shapes; the
+  credential is not the problem once clone already works. If a push must
+  happen, hand the finished work to a Claude Code session to push instead —
+  crediting Cowork as author, never claiming it (see house rule 9 in the file
+  this skill just fetched).
 - **A private repo needs the session to be authorized for it.** If the clone is
-  refused, that is an access problem, not a missing file. Report which it was.
+  refused for a reason other than the credential issue above, that is a
+  separate access problem, not a missing file. Report which it was.
 
 ## Why it is built this way
 
