@@ -29,15 +29,27 @@ surface without anyone pasting anything.
    it is the operating contract for every surface, and the failure it most
    often catches is a session that read *about* a thing instead of opening it.
 
-3. **Follow it as if it had been loaded directly.** Everything in it applies:
+3. **Open the Chain — one command, and it answers "what is already open":**
+
+   ```
+   python3 claude-audit/scripts/chain.py
+   ```
+
+   Every open thread in one shape: uncovered misses, backlog rows still open,
+   and what a supersedes link already killed. `cold` means raised and then
+   nobody came back to it. Read it at session start, and again before telling
+   him anything is finished. An empty chain says `calm zero` out loud, so a
+   clean run and a broken script never look the same.
+
+4. **Follow it as if it had been loaded directly.** Everything in it applies:
    branch discipline, model and session-length guidance, the decisions
    register, the learning loop, the Thread, the braindump sweep.
 
-4. **Also read, in the same repo, whichever of these the task touches:**
+5. **Also read, in the same repo, whichever of these the task touches:**
 
    | File | When |
    |---|---|
-   | `.claude/skills/house-rules/DECISIONS.md` | Before asking him to re-affirm ANY design or process decision. Grep it first; if the ruling is there, act on it and cite it. |
+   | `.claude/skills/house-rules/DECISIONS.md` | Before asking him to re-affirm ANY design or process decision. **Do NOT plain-grep it** — run `python3 claude-audit/scripts/supersedes.py lookup <term>`, which searches the register AND every report and tags each hit `IN FORCE` or `SUPERSEDED`. Measured 2026-08-30: a plain `grep -n plugin DECISIONS.md` returned as its FIRST hit the entry the next line calls "WRONG, do not act on it", and seven reversed rulings carried no forward marker. Append-only means the file reads top-to-bottom and the stale answer comes first. |
    | `.claude/skills/night-shift/SKILL.md` | The nightly learning-loop procedure. |
    | `.claude/skills/handoff/SKILL.md` | Ending a session properly. |
    | `.claude/skills/braindump/SKILL.md` | A handwritten PDF, photo dump, or note export arrives. |
