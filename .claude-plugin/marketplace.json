@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "gmor45-bootstrap",
-  "description": "A single pointer skill that loads Gmor45's operating rules from their private repo at session start. Public so it can be synced; carries no rules of its own.",
+  "description": "Pointer skills that load Gmor45's operating rules and Gartera-Vault procedures from their private repos at session start. Public so it can be synced; carries none of the content itself.",
   "owner": {
     "name": "Gmor45"
   },
@@ -17,6 +17,20 @@
         "source": "git-subdir",
         "url": "https://github.com/Gmor45/claude-bootstrap.git",
         "path": ".claude"
+      },
+      "homepage": "https://github.com/Gmor45/claude-bootstrap"
+    },
+    {
+      "name": "gmor45-skills",
+      "description": "Pointer skills for Gartera-Vault work (gartera-connect, gartera, flow, full-dive) that clone the private Gartera-Vault repo and read the real procedure live at session start. Contains none of the vault's content itself.",
+      "author": {
+        "name": "Gmor45"
+      },
+      "category": "productivity",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/Gmor45/claude-bootstrap.git",
+        "path": "gmor45-skills"
       },
       "homepage": "https://github.com/Gmor45/claude-bootstrap"
     }

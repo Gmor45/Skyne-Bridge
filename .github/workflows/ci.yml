@@ -24,6 +24,13 @@ jobs:
           cmds = [x["command"] for g in h["hooks"]["Stop"] for x in g["hooks"]]
           assert any("reply_gate.py" in c for c in cmds), "Stop hook not registered"
           json.load(open(".claude/.claude-plugin/plugin.json"))
-          json.load(open(".claude-plugin/marketplace.json"))
-          print("manifests ok; Stop hook registered")
+          json.load(open("gmor45-skills/.claude-plugin/plugin.json"))
+          mkt = json.load(open(".claude-plugin/marketplace.json"))
+          names = {p["name"] for p in mkt["plugins"]}
+          assert names == {"load-house-rules", "gmor45-skills"}, names
+          import os
+          for skill in ("gartera-connect", "gartera", "flow", "full-dive"):
+              path = f"gmor45-skills/skills/{skill}/SKILL.md"
+              assert os.path.isfile(path), f"missing {path}"
+          print("manifests ok; Stop hook registered; gmor45-skills pointers present")
           PY
