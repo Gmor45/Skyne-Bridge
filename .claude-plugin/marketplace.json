@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "load-house-rules",
-      "description": "Fetches the operating rules from the private claude-audit repo at the start of any session. Contains no rules itself — it is the pointer that makes a private ruleset reachable from Cowork and Claude Code without publishing it.",
+      "description": "Fetches the operating rules from the private claude-audit repo at the start of any session, and installs a Stop hook that refuses to end a substantive turn without a plain-English closing block (What I did / Why / Recommendations / TLDR). Contains no rules itself.",
       "author": {
         "name": "Gmor45"
       },

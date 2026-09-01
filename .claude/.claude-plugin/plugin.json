@@ -1,12 +1,18 @@
 {
   "name": "load-house-rules",
-  "version": "1.0.0",
-  "description": "Loads Gmor45's standing operating rules from the private claude-audit repo at session start. A pointer, not a copy — so the rules stay private and never drift out of date.",
+  "version": "1.1.0",
+  "description": "Loads Gmor45's standing operating rules from the private claude-audit repo at session start, and enforces the plain-English closing block on every reply. A pointer, not a copy \u2014 so the rules stay private and never drift out of date.",
   "author": {
     "name": "Gmor45"
   },
   "repository": "https://github.com/Gmor45/claude-bootstrap",
   "homepage": "https://github.com/Gmor45/claude-bootstrap",
   "license": "UNLICENSED",
-  "keywords": ["house-rules", "bootstrap", "operating-rules"]
+  "keywords": [
+    "house-rules",
+    "bootstrap",
+    "operating-rules",
+    "reply-gate",
+    "plain-english"
+  ]
 }
