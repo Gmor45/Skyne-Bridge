@@ -32,5 +32,12 @@ jobs:
           for skill in ("gartera-connect", "gartera", "flow", "full-dive"):
               path = f"gmor45-skills/skills/{skill}/SKILL.md"
               assert os.path.isfile(path), f"missing {path}"
-          print("manifests ok; Stop hook registered; gmor45-skills pointers present")
+          # The skills this plugin itself carries. A plugin that silently stops
+          # shipping a skill looks exactly like one that never had it.
+          for skill in ("load-house-rules", "wherewasi"):
+              path = f".claude/skills/{skill}/SKILL.md"
+              assert os.path.isfile(path), f"missing {path}"
+              head = open(path, encoding="utf-8").read(400)
+              assert head.startswith("---") and f"name: {skill}" in head, f"{path} has no frontmatter name"
+          print("manifests ok; Stop hook registered; 6 pointer skills present")
           PY
