@@ -40,6 +40,20 @@ turn that genuinely cannot satisfy it still gets to end.
 
 DELIVERY — this gate cannot fire in a multi-repo remote session
 ---------------------------------------------------------------
+CORRECTED 2026-09-02 (evening) — read this before the paragraph under it. The
+outcome below is right; the cause given for it was wrong. This gate ships as a
+PLUGIN hook (`hooks/hooks.json`), not through a repo's `.claude/settings.json`,
+so the subdirectory explanation does not apply to it. Measured in a remote
+multi-repo session: `~/.claude/plugins/synced` held only `marketplace.json` —
+the plugin was simply not installed there — and the only Stop hook registered
+was the platform's own git check. The subdirectory failure is real for the
+REPO-registered hooks (the vault's SessionStart brief, `findings_gate.py`,
+`trail.py hook`: none of their per-call artifacts existed after 158 vault
+scripts had run). Two different causes, one outcome: nothing of Skyne's fires
+on that surface. Filed as `2026-09-02-no-skyne-hook-fired-in-a-multi-repo-
+remote-session` in the brain repo's miss ledger; a "hooks fired this session"
+probe is the S6 work item that makes the hole visible instead of documented.
+
 Measured 2026-09-02. This repo's hooks are registered in its own
 `.claude/settings.json`. When a Claude Code session clones SEVERAL repos side
 by side, the project directory is their PARENT, this file sits in a
