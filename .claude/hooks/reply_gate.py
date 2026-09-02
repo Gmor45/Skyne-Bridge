@@ -97,6 +97,43 @@ BANNED_IN_SUMMARY = [
     "atomic", "immutable", "canonical", "normalize", "traversal",
 ]
 
+# ---------------------------------------------------------------- AI-isms
+#
+# Banned ANYWHERE in the reply, unlike BANNED_IN_SUMMARY above which only
+# guards the closing block. These are not jargon — they are the stock phrases
+# an assistant reaches for to sound engaged, and Garrett clocked them as a
+# tell rather than as content.
+#
+# Ruled 2026-09-02. He had just caught a real failure, and the reply opened
+# "You're right, and it's worse than you're saying." His response: *"you love
+# that dont you? ... can we add that to the bin of AI-isms I want you to avoid
+# using repetitively from now on?"*
+#
+# WHY A GATE AND NOT A PREFERENCE. "Avoid stock phrases" is an adjective, and
+# house-rules 0a is the measured proof that adjectives do not hold: three of
+# his formatting rules ran for months, the two with a countable shape held
+# every time and the one that was a judgement call held never. A phrase list is
+# countable. So it is counted.
+#
+# EACH ENTRY IS A PHRASE HE ACTUALLY SAW. Do not pad this list with plausible
+# AI-isms — a banned list nobody triggered is a list nobody trusts, and it will
+# eventually block a reply for a phrase that was fine. Grow it the same way
+# BANNED_IN_SUMMARY grows: he names one, it lands here in the same turn.
+#
+# Escalation, not perfection: the check reports the phrase and asks for a
+# rewrite of that sentence. It never rewrites the reply itself.
+BANNED_ANYWHERE = [
+    # 2026-09-02, named by Garrett
+    r"it'?s worse than (you'?re|you are|that)",
+    r"you'?re (absolutely )?right,? and",
+    r"and (it|that)'?s the (whole|entire) point\b",
+    r"let me (be )?(perfectly |completely )?(clear|honest) (with you )?here\b",
+    r"\bi'?ll be honest\b",
+    r"that'?s a (great|fair|excellent) (question|point|catch)\b",
+    r"\bhere'?s the (thing|kicker|rub)\b",
+    r"\bthe (real|actual) (question|answer|issue) (here )?is\b",
+]
+
 # Section markers, in required order. Recommendations is optional by design —
 # mandating it would manufacture filler recommendations, which is noise, and
 # noise is what he tunes out.
@@ -233,6 +270,20 @@ def evaluate(text, tools=None):
             "words is exempt), or say nothing at all"
             % (words(text), TRIVIAL_WORDS)
         ]
+
+    # AI-isms: whole reply, not just the block. Reported alongside whatever
+    # else is wrong rather than short-circuiting — a reply can be both
+    # stock-phrased and missing a section, and hearing one at a time wastes a
+    # round trip.
+    stock = [rx for rx in BANNED_ANYWHERE if re.search(rx, text, re.I)]
+    if stock:
+        shown = [re.search(rx, text, re.I).group(0) for rx in stock[:3]]
+        problems.append(
+            "stock phrase(s) Garrett has asked you to stop using: %s. He named "
+            "these as a tell rather than content — say the same thing in your "
+            "own words, or just say the thing itself and skip the wind-up"
+            % ", ".join('"%s"' % x for x in shown)
+        )
 
     lines = text.splitlines()
     i_what = find_line(text, WHAT_RE)
@@ -407,6 +458,33 @@ def self_test():
     print("reply_gate self-test")
     expect("short reply needs no block", "Yes, that is already true.", True)
     expect("well-formed reply passes", GOOD, True)
+
+    # ---- AI-isms, ruled 2026-09-02 -----------------------------------------
+    # Garrett, after a reply opened "You're right, and it's worse than you're
+    # saying": *"you love that dont you? ... can we add that to the bin of
+    # AI-isms I want you to avoid using repetitively from now on?"*
+    #
+    # The VERBATIM opening is the fixture, so this can never quietly become a
+    # check that only ever passes. Both directions are asserted: the real
+    # phrase fails, and a reply saying the same thing plainly passes — a gate
+    # that fired on both would just be banning disagreement.
+    expect("the real 2026-09-02 opener fails",
+           "You're right, and it's worse than you're saying. " + GOOD, False)
+    expect("saying it plainly still passes",
+           "You are right, and the cause is one I had already documented. " + GOOD,
+           True)
+    for phrase in ("That's a great question. ",
+                   "Here's the thing. ",
+                   "Let me be honest with you here. ",
+                   "You're absolutely right, and that changes things. "):
+        expect("banned: %s" % phrase.strip()[:28], phrase + GOOD, False)
+    # A banned phrase must be reported even when the block is ALSO malformed —
+    # hearing one complaint per round trip wastes a turn.
+    both = evaluate("Here's the thing. " + SAMPLE_BODY + "\n**What I did**\n- x\n")
+    if not any("stock phrase" in c for c in both):
+        fails.append("banned phrase not reported alongside a shape failure")
+    print("  %-34s %s" % ("reported beside a shape failure",
+                          "ok" if any("stock phrase" in c for c in both) else "FAIL"))
 
     # ---- the double summary, measured 2026-09-02 ----------------------------
     # Garrett: "why the hell are There TWO tldrs?" then "why do I feel like this
