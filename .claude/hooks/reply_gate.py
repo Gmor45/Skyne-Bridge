@@ -56,6 +56,10 @@ TRIVIAL_WORDS = 60
 # "concise" countable instead of arguable.
 SUMMARY_MAX_WORDS = 170
 
+# Tools that, on their own, mean the turn did no work worth reporting. Kept as a
+# set so a turn using ANY other tool is exempt automatically.
+NO_WORK_TOOLS = {"ReadNotifications"}
+
 # Re-prompts per turn before giving up. Deliberately low: a gate that nags
 # three times is one he learns to ignore, which is the failure it exists to fix.
 LOCAL_CAP = 2
@@ -136,6 +140,30 @@ def last_user_boundary(entries):
     return -1
 
 
+def tools_used(entries, boundary):
+    """Tool names invoked in the main loop this turn.
+
+    Cause 1 of house-rules 0b is countable and this is what counts it: a turn
+    whose ONLY tool call was ReadNotifications did no work, so a long reply
+    about it is a reply that should not exist. If a notification genuinely
+    needed acting on, some other tool would appear here — that is the
+    discriminator, and it is structural rather than a judgement about tone.
+    """
+    names = set()
+    for e in entries[boundary + 1:]:
+        if e.get("type") != "assistant" or e.get("isSidechain"):
+            continue
+        content = (e.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                n = blk.get("name")
+                if n:
+                    names.add(n)
+    return names
+
+
 def reply_text(entries, boundary):
     """Main-loop assistant prose written this turn. Subagent (sidechain) output
     is not the reply — it never reaches Garrett."""
@@ -165,15 +193,31 @@ def find_line(text, rx):
     return -1
 
 
-def evaluate(text):
+def evaluate(text, tools=None):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
-    than a copy of it.
+    than a copy of it. `tools` is the set of tool names used this turn, or None
+    when the caller cannot say; None disables only the echo check below.
     """
     problems = []
     if words(text) < TRIVIAL_WORDS:
         return []  # short answer, nothing to skim past
+
+    # house-rules 0b, cause 1. Measured 2026-09-01: four consecutive replies
+    # existed only to relay PR notifications that echoed Claude's own actions,
+    # and every one of them passed this gate on shape. Reading a queue is not
+    # work, so a turn that did nothing else owes Garrett one line, not four
+    # sections. This fires BEFORE the shape checks on purpose — telling a reply
+    # that should not exist to fix its heading order is the wrong instruction.
+    if tools is not None and tools and tools <= NO_WORK_TOOLS:
+        return [
+            "this turn only read the notification queue and did no other work, "
+            "yet the reply is %d words. An event that echoes your own action is "
+            "safe to skip — say it in ONE line with no closing block (under %d "
+            "words is exempt), or say nothing at all"
+            % (words(text), TRIVIAL_WORDS)
+        ]
 
     lines = text.splitlines()
     i_what = find_line(text, WHAT_RE)
@@ -293,6 +337,21 @@ GOOD = SAMPLE_BODY + (
 )
 
 
+ECHO_REPLY = (
+    "All four were echoes of my own actions on the pull request - the "
+    "subscription, the ready-for-review flip, the green CI I had already "
+    "polled, and the merge I had already verified against origin/main. GitHub "
+    "auto-unsubscribed the session. Queue is empty, nothing outstanding. Still "
+    "finished. The paste block from my last message is what you need, and there "
+    "is nothing further for anyone to act on here tonight at all.\n\n"
+    "**What I did** - Read the notification queue, confirmed all four were my "
+    "own actions coming back. No work needed.\n\n"
+    "**Why** - I check the queue rather than assume it is noise, but I am not "
+    "going to invent work out of it.\n\n"
+    "**TLDR** - Empty queue, nothing to act on, chat still done."
+)
+
+
 def self_test():
     fails = []
 
@@ -307,6 +366,26 @@ def self_test():
     print("reply_gate self-test")
     expect("short reply needs no block", "Yes, that is already true.", True)
     expect("well-formed reply passes", GOOD, True)
+
+    # ---- house-rules 0b cause 1: the echo reply, measured 2026-09-01 ----
+    # This block is the regression. The verbatim failing reply below PASSED
+    # every shape check the gate had at the time, which is what made Garrett
+    # ask for a summary at the end of a fully compliant session.
+    def expect_t(name, text, tools, should_pass):
+        got = evaluate(text, tools)
+        ok = (len(got) == 0) == should_pass
+        if not ok:
+            fails.append("%s: expected %s, got %r" % (
+                name, "pass" if should_pass else "fail", got))
+        print("  %-34s %s" % (name, "ok" if ok else "FAIL"))
+
+    expect_t("echo-only turn is caught", ECHO_REPLY, {"ReadNotifications"}, False)
+    expect_t("...and it passed on shape alone", ECHO_REPLY, None, True)
+    expect_t("echo + real work is exempt", ECHO_REPLY,
+             {"ReadNotifications", "Bash"}, True)
+    expect_t("one-line echo is fine", "All four echo my own actions; nothing to do.",
+             {"ReadNotifications"}, True)
+    expect_t("no tools recorded falls back to shape", GOOD, set(), True)
 
     # The regression this gate exists to stop: each required section must fail
     # the gate on its own when dropped, or the gate is one that only ever passes.
@@ -367,8 +446,9 @@ def run():
         entries = read_transcript(path)
         b = last_user_boundary(entries)
         text = reply_text(entries, b)
-        problems = evaluate(text)
+        problems = evaluate(text, tools_used(entries, b))
         print("reply words: %d" % words(text))
+        print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
         print("verdict: %s" % ("BLOCK" if problems else "allow"))
         for p in problems:
             print("  - " + p)
@@ -391,7 +471,7 @@ def run():
         # no reply to shape, so there is nothing to gate.
         allow("no_assistant_text")
 
-    problems = evaluate(text)
+    problems = evaluate(text, tools_used(entries, boundary))
     if not problems:
         allow("well_formed", words=words(text))
 
