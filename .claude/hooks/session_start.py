@@ -122,9 +122,10 @@ def not_found_message(cwd):
     return "\n".join([
         "=== load-house-rules plugin · SessionStart ===",
         "",
-        "The brain repo (skine, formerly claude-audit) is not reachable from this",
-        f"session (checked cwd and its immediate children under {cwd}, by content",
-        "— either directory name would have matched).",
+        "The brain repo (skyne, formerly claude-audit; spelled skine for one day)",
+        "is not reachable from this session (checked cwd and its immediate",
+        f"children under {cwd}, by content — any of those directory names would",
+        "have matched).",
         "",
         "LOAD THE RULES ANYWAY: Skill('house-rules'). It can clone the private",
         "repo itself. Do not proceed on any of Gmor45's repos, or on git, commits,",

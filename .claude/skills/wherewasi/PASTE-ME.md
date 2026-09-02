@@ -35,12 +35,17 @@ memory or from the repo's commit log. A made-up status is worse than an old one.
 ### 1. Get the script
 
 ```
-# The brain repo is `skine` (renamed from `claude-audit`, 2026-09-02). The old
-# URL redirects; a clone keeps whichever directory name it was made under.
-# Already present under EITHER name (check ./skine, ../skine, ./claude-audit,
-# ../claude-audit)? then pull it; otherwise clone:
-git -C skine pull --ff-only 2>/dev/null || git -C claude-audit pull --ff-only 2>/dev/null \
-  || git clone --depth 1 https://github.com/Gmor45/skine.git
+# The brain repo is `skyne` (renamed from `claude-audit`, 2026-09-02; spelled
+# `skine` for one day). The old URLs redirect; a clone keeps whichever directory
+# name it was made under. Already present under ANY name (check ./skyne,
+# ../skyne, ./skine, ../skine, ./claude-audit, ../claude-audit)? then pull it;
+# otherwise clone. The GitHub rename is Garrett's click and has not happened
+# yet, so the clone falls through skyne.git -> skine.git -> claude-audit.git:
+git -C skyne pull --ff-only 2>/dev/null || git -C skine pull --ff-only 2>/dev/null \
+  || git -C claude-audit pull --ff-only 2>/dev/null \
+  || git clone --depth 1 https://github.com/Gmor45/skyne.git 2>/dev/null \
+  || git clone --depth 1 https://github.com/Gmor45/skine.git 2>/dev/null \
+  || git clone --depth 1 https://github.com/Gmor45/claude-audit.git
 ```
 
 If the clone is refused for want of a credential, that is house rule 9a's
