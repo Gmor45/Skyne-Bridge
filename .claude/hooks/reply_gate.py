@@ -37,6 +37,21 @@ FAIL-OPEN, ALWAYS
 Every error path allows the stop. A gate that traps the model is worse than no
 gate. The per-turn counter caps re-prompts below the CLI's global ceiling so a
 turn that genuinely cannot satisfy it still gets to end.
+
+DELIVERY — this gate cannot fire in a multi-repo remote session
+---------------------------------------------------------------
+Measured 2026-09-02. This repo's hooks are registered in its own
+`.claude/settings.json`. When a Claude Code session clones SEVERAL repos side
+by side, the project directory is their PARENT, this file sits in a
+subdirectory, and those settings are never loaded — the same failure already
+documented for claude-audit's SessionStart hook.
+
+So on the surface where Garrett does much of his work, this gate is inert while
+looking installed. It caught the 2026-09-02 double-summary on shape when run by
+hand and did not fire once during the session that produced it. Do not read a
+clean session as evidence the gate is working; run `--self-test` to see whether
+the CODE is right, and check the session type to know whether it can RUN.
+
 """
 
 import json
@@ -241,9 +256,35 @@ def evaluate(text, tools=None):
             "What I did -> Why -> (Recommendations) -> TLDR, together at the end"
         )
 
-    i_recs = find_line(text, RECS_RE)
-    if i_recs >= 0 and not (i_why < i_recs < i_tldr):
-        problems.append("Recommendations must sit between Why and TLDR")
+    # TWO Recommendations sections is the shape this actually catches, and the
+    # old message described the symptom (position) instead of the cause.
+    #
+    # Garrett, 2026-09-02: "why do I feel like this is a lazy fix?" — after a
+    # reply with a `## Recommendations` section in the body AND one inside the
+    # block, plus a TLDR. He read it as three summaries of the same reply, and
+    # he was right. The duplication is not carelessness: rule 0a's block already
+    # CONTAINS Recommendations, while rule 10 separately says to put
+    # recommendations in their own short section. Obey both literally and you
+    # get two. One place, and the block is it.
+    #
+    # This gate already caught it on position — verified against the real reply
+    # — but never ran, because in a multi-repo remote session this repo's hooks
+    # sit in a subdirectory and are never loaded. See DELIVERY, below.
+    all_recs = [n for n, ln in enumerate(lines) if RECS_RE.search(ln)]
+    i_recs = all_recs[0] if all_recs else -1
+    if len(all_recs) > 1:
+        problems.append(
+            "there are %d Recommendations sections. The closing block's is the "
+            "only one — rule 0a's block already contains Recommendations, so a "
+            "second one in the body makes the reply summarise itself twice. "
+            "Delete the body copy; keep the reasons in the block's"
+            % len(all_recs)
+        )
+    elif i_recs >= 0 and not (i_why < i_recs < i_tldr):
+        problems.append(
+            "Recommendations must sit INSIDE the closing block, between Why and "
+            "TLDR — not as its own section up in the body"
+        )
 
     block_text = "\n".join(lines[i_what:])
     n = words(block_text)
@@ -366,6 +407,31 @@ def self_test():
     print("reply_gate self-test")
     expect("short reply needs no block", "Yes, that is already true.", True)
     expect("well-formed reply passes", GOOD, True)
+
+    # ---- the double summary, measured 2026-09-02 ----------------------------
+    # Garrett: "why the hell are There TWO tldrs?" then "why do I feel like this
+    # is a lazy fix?" The reply had a `## Recommendations` section in the body
+    # AND one in the block, so it summarised itself twice. This gate ALREADY
+    # caught the shape on position — the failure was delivery, not detection
+    # (see DELIVERY at the top). The message now names duplication rather than
+    # position, and both directions are asserted so it cannot become a check
+    # that only ever fires.
+    _f = "filler word " * 90
+    _dup = ("Body.\n\n## Recommendations\n\n- a\n\n---\n\n"
+            "**What I did** — d.\n\n**Why** — w. " + _f +
+            "\n\n**Recommendations** — r.\n\n**TLDR** — t.\n")
+    _one = ("Body. " + _f + "\n\n**What I did** — d.\n\n**Why** — w.\n\n"
+            "**Recommendations** — r.\n\n**TLDR** — t.\n")
+    _none = ("Body. " + _f + "\n\n**What I did** — d.\n\n**Why** — w.\n\n"
+             "**TLDR** — t.\n")
+    expect("two Recommendations sections fail", _dup, False)
+    expect("one, inside the block, passes", _one, True)
+    expect("no Recommendations at all passes", _none, True)
+    _msgs = " ".join(evaluate(_dup))
+    if "2 Recommendations sections" not in _msgs:
+        fails.append("the duplicate message must COUNT them, not just complain")
+    print("  %-34s %s" % ("the message names the count",
+                          "ok" if "2 Recommendations sections" in _msgs else "FAIL"))
 
     # ---- house-rules 0b cause 1: the echo reply, measured 2026-09-01 ----
     # This block is the regression. The verbatim failing reply below PASSED
