@@ -39,5 +39,16 @@ jobs:
               assert os.path.isfile(path), f"missing {path}"
               head = open(path, encoding="utf-8").read(400)
               assert head.startswith("---") and f"name: {skill}" in head, f"{path} has no frontmatter name"
-          print("manifests ok; Stop hook registered; 6 pointer skills present")
+          # The paste copy Garrett saves into his Cowork account by hand must
+          # stay byte-identical to the skill. This is the failure that already
+          # happened twice to the house-rules PASTE-ME (73 lines behind, then
+          # 81) — caught by Garrett the first time, by a check the second.
+          import filecmp
+          a = ".claude/skills/wherewasi/SKILL.md"
+          b = ".claude/skills/wherewasi/PASTE-ME.md"
+          assert os.path.isfile(b), f"missing {b}"
+          assert filecmp.cmp(a, b, shallow=False), (
+              f"{b} has drifted from {a} — re-copy it, do not hand-edit either")
+          print("manifests ok; Stop hook registered; 6 pointer skills present; "
+                "wherewasi paste copy in sync")
           PY
