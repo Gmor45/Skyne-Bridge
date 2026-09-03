@@ -22,6 +22,28 @@
           }
         ]
       }
+    ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/model_switch.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/model_switch.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
