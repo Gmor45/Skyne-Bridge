@@ -23,6 +23,23 @@ That is the point of the design: the technical layer stays, and the block makes
 it optional to read. Length was never the complaint — having to read the length
 to find the answer was.
 
+CORRECTION 2026-09-03 — the block was right, the frequency was not
+--------------------------------------------------------------------
+This gate had no memory across turns: every substantive reply, forever, got
+the closing block, because nothing here ever asked "did I just show this a
+moment ago?" In a long working session almost every reply is substantive, so
+Garrett got the block on nearly every message. Found in a Cowork session:
+"its doing the TLDR What, Why, Recommendations like way too many times."
+
+The block itself was never the complaint — it is what makes a long reply
+skimmable, and that need has not gone away. The complaint was cadence. So the
+structural requirement (What I did / Why / TLDR, in order, sized and
+jargon-free) now runs on a COOLDOWN: required on the first substantive reply
+of a session, then again only once COOLDOWN_TURNS more have passed. The
+stock-phrase and echo-only-turn checks below are NOT on this cooldown — they
+do not repeat the block, so exempting them the same way would hide a
+different failure behind this one's fix. See COOLDOWN_TURNS.
+
 WHAT IT CANNOT DO, STATED HONESTLY
 ----------------------------------
 No script can tell whether prose is actually simple. This one checks structure
@@ -92,6 +109,17 @@ NO_WORK_TOOLS = {"ReadNotifications"}
 # Re-prompts per turn before giving up. Deliberately low: a gate that nags
 # three times is one he learns to ignore, which is the failure it exists to fix.
 LOCAL_CAP = 2
+
+# Substantive turns between REQUIRED closing blocks. Found 2026-09-03: this was
+# unset (every substantive turn required it, forever) and that is what "way too
+# many times" was. 5 is a guess at a working session's natural rhythm rather
+# than a measurement — there is no prior data on the RIGHT cadence, only proof
+# the old one (every turn) was wrong. Override with REPLY_GATE_COOLDOWN_TURNS
+# to retune without a code change while real data accumulates.
+try:
+    COOLDOWN_TURNS = int(os.environ.get("REPLY_GATE_COOLDOWN_TURNS", "5"))
+except ValueError:
+    COOLDOWN_TURNS = 5
 
 # Banned INSIDE the closing block only. Not a style opinion — these are words
 # that do not survive translation into "explain it like I'm five", so their
@@ -259,15 +287,23 @@ def find_line(text, rx):
     return -1
 
 
-def evaluate(text, tools=None):
+def is_trivial(text):
+    """A reply this short never needed the closing block, cooldown or not."""
+    return words(text) < TRIVIAL_WORDS
+
+
+def evaluate(text, tools=None, require_block=True):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
     than a copy of it. `tools` is the set of tool names used this turn, or None
     when the caller cannot say; None disables only the echo check below.
+    `require_block` is the cooldown's decision, made by the caller — this
+    function stays a pure function of its arguments rather than reading the
+    clock or the filesystem itself, which is what keeps it self-testable.
     """
     problems = []
-    if words(text) < TRIVIAL_WORDS:
+    if is_trivial(text):
         return []  # short answer, nothing to skim past
 
     # house-rules 0b, cause 1. Measured 2026-09-01: four consecutive replies
@@ -298,6 +334,9 @@ def evaluate(text, tools=None):
             "own words, or just say the thing itself and skip the wind-up"
             % ", ".join('"%s"' % x for x in shown)
         )
+
+    if not require_block:
+        return problems
 
     lines = text.splitlines()
     i_what = find_line(text, WHAT_RE)
@@ -372,7 +411,15 @@ def evaluate(text, tools=None):
     return problems
 
 
-def build_reason(problems, attempt):
+def build_reason(problems, attempt, require_block=True):
+    if not require_block:
+        # Not a block-shape ask -- do not describe the four-part structure for
+        # a problem that is only a stock phrase or an echo-only turn. Asking
+        # for a block nobody required would just reintroduce the frequency
+        # this cooldown exists to fix.
+        head = ("Do not end this turn yet -- one thing needs fixing first:"
+                if attempt <= 1 else "Still not right:")
+        return "%s\n%s" % (head, "\n".join("  - " + p for p in problems))
     head = (
         "Do not end this turn yet. Garrett reads the closing block and often "
         "nothing else, so a turn without one lands as unreadable."
@@ -395,12 +442,67 @@ def build_reason(problems, attempt):
 
 # ---------------------------------------------------------------- counter
 
-def counter_path():
+def _state_dir():
     home = os.path.expanduser("~")
     if not home or home == "~" or not os.access(home, os.W_OK):
         home = tempfile.gettempdir()
-    d = os.path.join(home, ".reply-gate")
+    return os.path.join(home, ".reply-gate")
+
+
+def counter_path():
+    d = _state_dir()
     return d, os.path.join(d, "turn-counter.json")
+
+
+# ---------------------------------------------------------------- cooldown
+#
+# Tracks turns-since-the-block-last-ran, one file PER SESSION -- the opposite
+# key from counter_path() above, which tracks retry attempts within a single
+# turn and is reset by a new message uuid. This one persists across the whole
+# transcript on purpose: that is what makes the cadence a SESSION property
+# rather than a per-message coincidence.
+
+def cooldown_path(transcript_path):
+    """Hashed rather than the raw path, so an unusual transcript path never
+    becomes an unwritable or collision-prone filename."""
+    import hashlib
+    key = hashlib.sha256((transcript_path or "").encode()).hexdigest()[:16]
+    return os.path.join(_state_dir(), "cooldown-%s.json" % key)
+
+
+def turns_since_block(transcript_path):
+    """How many substantive turns have passed since the block last ran.
+
+    No state file -- a fresh session, or one whose state was wiped -- reads as
+    DUE. The one case this must never produce is a session's first substantive
+    reply skipping the block because a stale or missing file looked like a
+    recent cooldown; failing toward "still required" is the safe direction.
+    """
+    try:
+        with open(cooldown_path(transcript_path), encoding="utf-8") as f:
+            state = json.load(f)
+        return int(state.get("since_last", COOLDOWN_TURNS))
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return COOLDOWN_TURNS
+
+
+def record_cooldown(transcript_path, since_last, required_block):
+    """Called once per substantive turn, after the verdict is final.
+
+    Demanding the block resets the clock to 0 whether or not the reply
+    actually managed a compliant one on the first try -- re-demanding it next
+    turn just because this turn struggled once would reintroduce the exact
+    frequency this cooldown exists to fix. Not demanding it just counts one
+    turn closer to the next time it will be.
+    """
+    since = 0 if required_block else since_last + 1
+    try:
+        d = _state_dir()
+        os.makedirs(d, exist_ok=True)
+        with open(cooldown_path(transcript_path), "w", encoding="utf-8") as f:
+            json.dump({"since_last": since}, f)
+    except OSError:
+        pass  # best effort; a lost state file just re-triggers next turn
 
 
 def bump(turn_key):
@@ -582,6 +684,100 @@ def self_test():
         False,
     )
 
+    # ---- require_block=False: only stock phrases and echo-turns still fire --
+    # Found 2026-09-03: the block ran on every substantive turn, forever.
+    # These assert the escape hatch works, and that it is NARROW -- it must
+    # skip the four-section requirement and NOTHING else.
+    no_block_plain = SAMPLE_BODY  # well-formed prose, no closing block at all
+    got = evaluate(no_block_plain, require_block=False)
+    ok = got == []
+    print("  %-34s %s" % ("require_block=False allows no block",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("require_block=False should allow a blockless reply, got %r" % got)
+
+    # GOOD is well over the 60-word trivial floor on its own (SAMPLE_BODY
+    # alone was one word short of it, and that word count IS the point of a
+    # gate like this one — it must be checked, not eyeballed).
+    stock_no_block = "Here's the thing. " + GOOD
+    got = evaluate(stock_no_block, require_block=False)
+    ok = len(got) == 1 and "stock phrase" in got[0]
+    print("  %-34s %s" % ("...but a stock phrase still fires",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("require_block=False must still catch AI-isms, got %r" % got)
+
+    got = evaluate(ECHO_REPLY, {"ReadNotifications"}, require_block=False)
+    ok = len(got) == 1
+    print("  %-34s %s" % ("...and an echo-only turn still fires",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("require_block=False must still catch echo-only turns, got %r" % got)
+
+    # build_reason must not describe the four-part shape for a require_block=
+    # False complaint -- asking for a block nobody required reintroduces the
+    # exact frequency this cooldown exists to fix.
+    reason = build_reason(["stock phrase(s): x"], 1, require_block=False)
+    ok = "What I did" not in reason
+    print("  %-34s %s" % ("build_reason(False) omits the shape",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("build_reason(require_block=False) must not print the four-part shape")
+
+    # ---- the cooldown state machine, on an isolated HOME ---------------------
+    real_home = os.environ.get("HOME")
+    tmp_home = tempfile.mkdtemp(prefix="reply-gate-selftest-")
+    try:
+        os.environ["HOME"] = tmp_home
+        path_a = "/fake/transcript/a.jsonl"
+        path_b = "/fake/transcript/b.jsonl"
+
+        since = turns_since_block(path_a)
+        ok = since >= COOLDOWN_TURNS
+        print("  %-34s %s" % ("a fresh session is DUE",
+                              "ok" if ok else "FAIL"))
+        if not ok:
+            fails.append("a session with no state file must read as due, got since_last=%r" % since)
+
+        record_cooldown(path_a, since, True)
+        since = turns_since_block(path_a)
+        ok = since == 0
+        print("  %-34s %s" % ("required resets the clock to 0",
+                              "ok" if ok else "FAIL"))
+        if not ok:
+            fails.append("recording required=True must reset since_last to 0, got %r" % since)
+
+        for i in range(COOLDOWN_TURNS - 1):
+            record_cooldown(path_a, turns_since_block(path_a), False)
+        since = turns_since_block(path_a)
+        ok = since == COOLDOWN_TURNS - 1
+        print("  %-34s %s" % ("skipped turns count up, not required yet",
+                              "ok" if ok else "FAIL"))
+        if not ok:
+            fails.append("after %d skips since_last should be %d, got %r"
+                         % (COOLDOWN_TURNS - 1, COOLDOWN_TURNS - 1, since))
+
+        record_cooldown(path_a, turns_since_block(path_a), False)
+        since = turns_since_block(path_a)
+        ok = since >= COOLDOWN_TURNS
+        print("  %-34s %s" % ("one more skip crosses the threshold",
+                              "ok" if ok else "FAIL"))
+        if not ok:
+            fails.append("crossing COOLDOWN_TURNS should read as due again, got %r" % since)
+
+        ok = turns_since_block(path_b) >= COOLDOWN_TURNS
+        print("  %-34s %s" % ("a second session has its own clock",
+                              "ok" if ok else "FAIL"))
+        if not ok:
+            fails.append("session b must not inherit session a's cooldown state")
+    finally:
+        if real_home is not None:
+            os.environ["HOME"] = real_home
+        else:
+            os.environ.pop("HOME", None)
+        import shutil as _shutil
+        _shutil.rmtree(tmp_home, ignore_errors=True)
+
     if fails:
         print("\nFAILED:")
         for f in fails:
@@ -604,9 +800,14 @@ def run():
         entries = read_transcript(path)
         b = last_user_boundary(entries)
         text = reply_text(entries, b)
-        problems = evaluate(text, tools_used(entries, b))
+        trivial = is_trivial(text)
+        since_last = None if trivial else turns_since_block(path)
+        require_block = (not trivial) and since_last >= COOLDOWN_TURNS
+        problems = evaluate(text, tools_used(entries, b), require_block=require_block)
         print("reply words: %d" % words(text))
         print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
+        print("cooldown: since_last=%s require_block=%s (this is a DRY RUN -- "
+              "state is not written)" % (since_last, require_block))
         print("verdict: %s" % ("BLOCK" if problems else "allow"))
         for p in problems:
             print("  - " + p)
@@ -618,7 +819,8 @@ def run():
     except json.JSONDecodeError:
         allow("stdin_unparseable")
 
-    entries = read_transcript(payload.get("transcript_path") or "")
+    transcript_path = payload.get("transcript_path") or ""
+    entries = read_transcript(transcript_path)
     if not entries:
         allow("transcript_empty")
 
@@ -629,16 +831,28 @@ def run():
         # no reply to shape, so there is nothing to gate.
         allow("no_assistant_text")
 
-    problems = evaluate(text, tools_used(entries, boundary))
+    # The cooldown decision lives here, not inside evaluate() — evaluate()
+    # stays a pure function of its arguments so the self-test exercises the
+    # real logic rather than a copy of it (see its docstring).
+    trivial = is_trivial(text)
+    since_last = None if trivial else turns_since_block(transcript_path)
+    require_block = (not trivial) and since_last >= COOLDOWN_TURNS
+
+    problems = evaluate(text, tools_used(entries, boundary), require_block=require_block)
     if not problems:
-        allow("well_formed", words=words(text))
+        if not trivial:
+            record_cooldown(transcript_path, since_last, require_block)
+        allow("well_formed", words=words(text),
+              block="required" if require_block else "cooldown")
 
     e = entries[boundary] if boundary >= 0 else {}
     key = e.get("uuid") or e.get("timestamp") or "unkeyed"
     n = bump(key)
     if n > LOCAL_CAP:
+        if not trivial:
+            record_cooldown(transcript_path, since_last, require_block)
         allow("cap_exhausted", count=n)
-    block(build_reason(problems, n))
+    block(build_reason(problems, n, require_block))
 
 
 def main():
