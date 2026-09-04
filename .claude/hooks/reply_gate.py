@@ -137,6 +137,10 @@ BANNED_IN_SUMMARY = [
     "venv", "orm", "cors", "mtls", "bytecode", "closure", "recursion",
     "abstraction", "sidechain", "transcript_path", "concurrency",
     "atomic", "immutable", "canonical", "normalize", "traversal",
+    # 2026-09-04. A block that passed this gate on shape read as a list of
+    # mechanisms to Garrett: "I dont understand the concept of what you did
+    # stuff for." The two words below carried the most weight in it.
+    "protocol", "mutation",
 ]
 
 # ---------------------------------------------------------------- AI-isms
