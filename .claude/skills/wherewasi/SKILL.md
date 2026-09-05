@@ -148,6 +148,53 @@ state so waiting-on-him is findable without reading, a count on every section,
 and an empty board that says it is a calm zero rather than rendering blank. On
 path B the age goes at the very top, in the same words the script used.
 
+### The page has TWO bands, and the second one is why
+
+**Added 2026-09-05, from Garrett: the recap he actually found useful was not
+this board.** After a session published a status page — what broke, where the
+work stood, what was blocked on him — he asked for `/wherewasi` to produce the
+same thing, *"or at least integrate the two in an additive fashion."*
+
+They answer different questions and merging them would ruin both. This board
+answers **"which chat do I open"**. That page answered **"what is blocked on
+me"**. So the second question gets its own band rather than its own command.
+
+The reason it is needed is measured, not felt. This script's closing section
+already says it reads session **metadata, never transcripts** — so
+`WAITING ON YOU` only ever holds what a chat *declared* through `needs_action`.
+On 2026-09-05 the two things Garrett had actually been stuck on for days — a
+repository secret only he can add, and four console rulings — were declared by
+**no chat at all**, because they live in a dated report and the backlog. The
+board routed him correctly and still could not show him his own blockers.
+
+`--json` now carries a **`threads`** block, joined from `chain.py` and
+`check_backlog.py`. Nothing extra to run; it rides along with the board and is
+saved with it, so path B gets it too.
+
+| key | draw it as |
+|---|---|
+| `counts` | open / cold / unswept / settled, one figure each |
+| `due` | the `needs-garrett` rows actually DUE — this is the band's point |
+| `dueShown` / `dueTotal` | **both**, always, so a capped list cannot read as a complete one |
+| `available` + `why` | when false, print `why` — do NOT render an empty band |
+
+Three rules for drawing it:
+
+- **Chats first, estate second.** He opens this to find a chat. The band is
+  what he sees on the way past, not the headline.
+- **Never dump the backlog.** 67 rows carry `needs-garrett`; the script hands
+  you only the due ones and caps them at 8. Rendering all 67 as "waiting on
+  you" converts a legible board into the silent backlog the vault's own split
+  rule warns about.
+- **`available: false` is a sentence, not a blank.** An estate that could not
+  be read and a calm one must never look the same — that is house rule 6, and
+  it is guarded by `wherewasi-estate-band-unreadable-is-not-a-calm-zero` in
+  `data/mutations.json`.
+
+**A board saved before 2026-09-05 has no `threads` key.** Say so on the page in
+one line rather than omitting the band silently — an absent band and a quiet
+estate are the same shape, which is the exact failure the band exists to stop.
+
 ### Say the short version, then make the call
 
 Give him the two or three lines that matter — who needs him, what is colliding.
