@@ -16,6 +16,8 @@ jobs:
           python-version: "3.11"
       - name: Gate self-test
         run: python3 .claude/hooks/reply_gate.py --self-test
+      - name: Turn counter self-test
+        run: python3 .claude/hooks/turn_counter.py --self-test
       - name: Manifests are valid JSON and register the hook
         run: |
           python3 - <<'PY'
@@ -23,6 +25,12 @@ jobs:
           h = json.load(open(".claude/hooks/hooks.json"))
           cmds = [x["command"] for g in h["hooks"]["Stop"] for x in g["hooks"]]
           assert any("reply_gate.py" in c for c in cmds), "Stop hook not registered"
+          # house-rules 3a's live counter. It ships in this plugin rather than
+          # in a repo because "every repo" is the ask and a repo's settings.json
+          # reaches only sessions rooted at that repo; a plugin already synced
+          # fires in every session on every surface. A hook that stops being
+          # registered looks exactly like one that never existed.
+          assert any("turn_counter.py" in c for c in cmds), "turn counter not registered"
           json.load(open(".claude/.claude-plugin/plugin.json"))
           json.load(open("gmor45-skills/.claude-plugin/plugin.json"))
           mkt = json.load(open(".claude-plugin/marketplace.json"))

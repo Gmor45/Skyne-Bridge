@@ -60,3 +60,48 @@ python3 .claude/hooks/reply_gate.py --transcript <file>    # dry-run a real tran
 
 The banned-word list is meant to grow: **when Garrett asks what a word means,
 that word goes in the list in the same turn.**
+
+## And the turn counter
+
+`.claude/hooks/turn_counter.py`, registered as a second `Stop` hook alongside the
+reply gate. It answers house-rules **3a**, which is the estate's largest measured
+cost lever and had nothing firing on it.
+
+**Why length matters more than model choice.** Every turn re-sends the whole
+conversation behind it, so a chat's cost grows with roughly `turns²`. Measured
+across the session index on 2026-09-04: **one session is about half of all
+re-send cost ever incurred**, and ten sessions are seven eighths of it. Capping
+chats at ~1,000 turns is worth more than switching to a cheaper model, and it
+needs no tool and no permission — only a habit.
+
+**What it does.** On every stop it counts the real user turns in the transcript.
+Under 600 it does nothing at all. Crossing 600 it fires **once**, telling Claude
+to say the count to Garrett and warn that a handoff should be written while there
+is still room. Past 1,000 it fires once more and requires `/handoff` to actually
+be run — because rule 3's recorded failure is a session that said the chat should
+end four times and never wrote one. Past that, once every further 500 turns.
+
+**Once per band, never a nag.** The band already announced is recorded per
+session, so a gate that fires on every stop past 600 — which is a gate that gets
+deleted — cannot happen.
+
+**Why it is here rather than in each repo.** Garrett asked for it in "every repo
+just so nothing gets missed." A repo's `.claude/settings.json` reaches only
+sessions whose project directory is that repo, so eight copies would be eight
+files that drift. This plugin is already synced, so one file fires in every
+session on every surface with no click — the same argument that put the reply
+gate here.
+
+```bash
+python3 .claude/hooks/turn_counter.py --self-test            # 20 checks
+python3 .claude/hooks/turn_counter.py --count -t <file>      # count a real transcript
+```
+
+**Two copies of the threshold, said out loud.** `THRESHOLD = 1000` here and
+`TURN_THRESHOLD` in `skyne/scripts/session_cost.py` are the same number: a plugin
+hook runs with no repo attached (that is the point of it), and skyne cannot
+import a plugin it does not ship. Nothing here can enforce the agreement, which
+is stated rather than hidden — rule 21 point 5.
+
+It fails open on every error path — no stdin, no transcript path, an unwritable
+state directory, a half-written line — so it can never trap a session.
