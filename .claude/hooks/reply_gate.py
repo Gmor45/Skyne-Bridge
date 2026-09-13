@@ -451,6 +451,36 @@ def pr_close_missing_backlog_count(text, tools):
                 and _NAMES_CONFLICT_COUNT.search(text or ""))
 
 
+# House-rules 1b: "Garrett does not check GitHub, ever... I only look at
+# these chats and Obsidian." Found live in this file's own session, 2026-09-13:
+# a permission denial on ONE action (unsubscribing from a merged PR's activity)
+# was wrongly read as blocking a DIFFERENT one (merging a second PR), with no
+# attempt to test it -- so the reply told Garrett to "take a look at
+# Gmor45/Skyne-Bridge pull request #45... and merge it yourself" instead of
+# just trying the merge, which then worked on the first real attempt. That is
+# house-rules 6a by name: an assumed block is a CLAIM, and the cheap lookup
+# that would have refuted it (just calling the tool) was never run.
+GITHUB_CHECK_RX = [
+    re.compile(r"\b(?:take a look at|look at|check out|review|go check)\b"
+               r"[^.\n]{0,60}\b(?:pr|pull request)\b", re.I),
+    re.compile(r"\b(?:take a look at|look at|check out|review|go check)\b"
+               r"[^.\n]{0,40}#\d+", re.I),
+    re.compile(r"\bgithub\.com/[^\s)]+/pull/\d+", re.I),
+    re.compile(r"\bmerge it yourself\b", re.I),
+]
+
+
+def tells_garrett_to_check_github(text):
+    """True when the reply hands Garrett a PR or GitHub link to go open.
+
+    Naming a PR or its number in a STATEMENT of fact ("4 open PRs, 0
+    conflicting", required by rule 1e) must stay silent -- this fires only on
+    an instruction to go LOOK, open, or merge something himself.
+    """
+    t = text or ""
+    return any(rx.search(t) for rx in GITHUB_CHECK_RX)
+
+
 # Rule 2a: "Mismatch -> say so, first, addressed to him by name, one line, the
 # exact tier, no hedging." Only Garrett can type /model, so the recommendation
 # is the entire implementation -- and it is worthless if he has to guess the
@@ -759,6 +789,18 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "`python3 scripts/companion.py check <path>`, then publish it as "
             "an Artifact — or say plainly 'no Companion needed' and why "
             "(e.g. this is one factual answer, not a working session)"
+        )
+
+    # house-rules 1b: he never checks GitHub. See GITHUB_CHECK_RX above for
+    # the live miss this closes.
+    if tells_garrett_to_check_github(text):
+        problems.append(
+            "this reply tells Garrett to go look at, open, or merge something "
+            "on GitHub himself. House-rules 1b: he has said outright he never "
+            "checks GitHub, only these chats and Obsidian -- and his own "
+            "green PRs are yours to merge without asking. Try the action "
+            "yourself before assuming it is blocked, and if it genuinely is, "
+            "say what is blocking it here instead of pointing him at a link"
         )
 
     spent = tier_call_on_a_spent_turn(text, tools)
@@ -1546,6 +1588,35 @@ def self_test():
     print("  %-34s %s" % ('PLANTED: it reports NOT gated', "ok" if ok else "FAIL"))
     if not ok:
         fails.append('PLANTED case: an unrelated transcript must report NOT gated')
+
+    # ---- house-rules 1b: never tell Garrett to go check GitHub --------------
+    _real_miss = ("Both fixes are merged now. Take a look at "
+                  "Gmor45/Skyne-Bridge pull request #45 when you get a "
+                  "chance and merge it yourself if it looks right to you.")
+    ok = tells_garrett_to_check_github(_real_miss)
+    print("  %-34s %s" % ('1b: the real 2026-09-13 miss fires', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('the exact sentence that caused this miss must be caught')
+    ok = tells_garrett_to_check_github(
+        "https://github.com/Gmor45/Skyne/pull/489 -- check it out when free")
+    print("  %-34s %s" % ('1b: a raw PR link with go-look phrasing fires', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('a bare github.com pull URL paired with go-look phrasing must fire')
+    ok = not tells_garrett_to_check_github(
+        "4 open PRs in this repo, 0 conflicting. Both were merged this turn.")
+    print("  %-34s %s" % ('1b: a bare PR count/statement stays silent', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('rule 1e already requires stating PR counts -- that must not also fire this')
+    ok = not tells_garrett_to_check_github(
+        "I merged Skyne-Bridge#45 and Skyne#489; nothing else needs you.")
+    print("  %-34s %s" % ('1b: reporting a merge as fact stays silent', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('stating what was done is not telling him to go look')
+    ok = any("GitHub" in g or "1b" in g for g in evaluate(
+        SAMPLE_BODY + "\n" + _real_miss + "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"))
+    print("  %-34s %s" % ('1b: evaluate() refuses the real miss', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('evaluate() must surface the GitHub-check problem, not only the raw function')
 
     # ---- house-rules 0a-i: ONE wrap-up, last message only --------------------
     # Ruled 2026-09-09. ~17 wrap-ups landed across 9 typed messages in one
