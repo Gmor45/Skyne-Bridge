@@ -646,8 +646,56 @@ def handoff_ran(entries):
     return False
 
 
+def companion_gated(entries):
+    """True when THIS SESSION has run companion.py's rule-17 gate at least once.
+
+    House-rules 14 says publish a Companion artifact on the first substantive
+    turn; rule 17 says every publish is preceded by `companion.py check
+    <path>`. That gate has no other reason to run, so its presence in the
+    transcript is the achievable proxy for "a Companion was actually
+    published" — checking for the Artifact tool call itself would give MORE
+    false negatives, not fewer: a session can retitle the page, so the
+    template's default `<title>Companion</title>` is not guaranteed to survive
+    into the Artifact call's own title/file fields.
+
+    Built 2026-09-13 after a session's own handoff recorded this exact miss:
+    the SessionStart hook printed "PUBLISH THE COMPANION on your first
+    substantive turn" at every one of at least four resumes in one session,
+    and it was ignored every time (`knew-skipped`). A passive print is rule
+    21's weakest rung; this puts the same requirement on the Stop hook's top
+    rung instead, the same move rule 3's `handoff_ran` already made for the
+    handoff.
+
+    Scans the whole transcript, not the turn, for the same reason
+    `handoff_ran` does: this is a session property. Fails SAFE (returns True)
+    on anything it cannot read — a trapped session is worse than a missed nag.
+    """
+    if not entries:
+        return True
+    try:
+        for e in entries:
+            blob = json.dumps(e)
+            if '"Bash"' in blob and "companion.py" in blob and "check" in blob:
+                return True
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+# An explicit, stated reason to skip beats a silent one — rule 6c's own
+# argument, pointed at this gate. A session doing one genuinely one-off reply
+# (answer a single factual question, no ongoing work) can say so instead of
+# building a Companion that would have nothing to show.
+COMPANION_OPT_OUT_RX = re.compile(
+    r"no companion (?:is )?needed|skipping the companion", re.I)
+
+
+def companion_opted_out(text):
+    return bool(COMPANION_OPT_OUT_RX.search(text or ""))
+
+
 def evaluate(text, tools=None, require_block=True, handoff_done=True,
-             stock_text=None, wrapup_count=1):
+             stock_text=None, wrapup_count=1, companion_done=True):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
@@ -662,6 +710,9 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     need, so it stays a plain integer input like the others. Defaults to 1
     (the required, single wrap-up) so a caller that cannot say never triggers
     a false refusal.
+    `companion_done` is house-rules 14's Companion gate, computed by the
+    caller from the transcript (see companion_gated) — defaults to True so a
+    caller that cannot say never triggers a false refusal.
     """
     problems = []
     if is_trivial(text):
@@ -692,6 +743,22 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "start a new chat without running the skill is the failure, not the "
             "fix.' Run the handoff skill first, then say it — or drop the "
             "recommendation from this reply"
+        )
+
+    # house-rules 14. Same placement logic as rule 3 just above: telling a
+    # reply that should have published a Companion to fix its heading order
+    # is the wrong instruction. Fires on every substantive turn until it has
+    # happened once this session, then never again — matching the rule's own
+    # wording ("on your first substantive turn"), not a repeating nag.
+    if not companion_done and not companion_opted_out(text):
+        problems.append(
+            "this session has not run `companion.py check` yet, and "
+            "house-rules 14 says publish a Companion artifact on the first "
+            "substantive turn of any working session. Run "
+            "`python3 scripts/companion.py new --out <path>`, fill it in, "
+            "`python3 scripts/companion.py check <path>`, then publish it as "
+            "an Artifact — or say plainly 'no Companion needed' and why "
+            "(e.g. this is one factual answer, not a working session)"
         )
 
     spent = tier_call_on_a_spent_turn(text, tools)
@@ -1454,6 +1521,32 @@ def self_test():
     if not ok:
         fails.append('observing the chat is long is not recommending it end')
 
+    # ---- house-rules 14: the Companion gate ---------------------------------
+    ok = any("Companion" in g for g in evaluate(_end, handoff_done=True, companion_done=False))
+    print("  %-34s %s" % ('rule 14: no companion is refused', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('a substantive turn with no companion.py check run must be refused')
+    ok = not any("Companion" in g for g in evaluate(_end, handoff_done=True, companion_done=True))
+    print("  %-34s %s" % ('rule 14: passes once gated', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('the same reply must pass once companion_gated() reports True')
+    _opt_out = _end + "\nNo Companion needed — one factual answer, not a working session.\n"
+    ok = not any("Companion" in g for g in evaluate(_opt_out, handoff_done=True, companion_done=False))
+    print("  %-34s %s" % ('rule 14: an explicit opt-out passes', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('a stated "no Companion needed" reason must not be refused')
+    ok = companion_gated([{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash",
+         "input": {"command": "python3 scripts/companion.py check /tmp/c.html"}}]}}]) is True
+    print("  %-34s %s" % ('companion_gated sees a real check run', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('a real `companion.py check` Bash call must be detected')
+    ok = companion_gated([{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}]) is False
+    print("  %-34s %s" % ('PLANTED: it reports NOT gated', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('PLANTED case: an unrelated transcript must report NOT gated')
+
     # ---- house-rules 0a-i: ONE wrap-up, last message only --------------------
     # Ruled 2026-09-09. ~17 wrap-ups landed across 9 typed messages in one
     # session against a delivered cooldown that required about 2, because a
@@ -1627,7 +1720,8 @@ def run():
         problems = evaluate(text, tools_used(entries, b), require_block=require_block,
                             handoff_done=handoff_ran(entries),
                             stock_text=latest_prose(entries, b),
-                            wrapup_count=wrapups)
+                            wrapup_count=wrapups,
+                            companion_done=companion_gated(entries))
         print("reply words: %d" % words(text))
         print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
         print("wrap-ups this turn: %d" % wrapups)
@@ -1666,7 +1760,8 @@ def run():
     problems = evaluate(text, tools_used(entries, boundary), require_block=require_block,
                         handoff_done=handoff_ran(entries),
                         stock_text=latest_prose(entries, boundary),
-                        wrapup_count=wrapups_this_turn(entries, boundary))
+                        wrapup_count=wrapups_this_turn(entries, boundary),
+                        companion_done=companion_gated(entries))
     if not problems:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
