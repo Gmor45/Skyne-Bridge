@@ -724,8 +724,105 @@ def companion_opted_out(text):
     return bool(COMPANION_OPT_OUT_RX.search(text or ""))
 
 
+
+# ---- house-rules: the visual design record gets a mechanism ----------------
+#
+# Garrett, 2026-09-13, after finding the published Loop board was a scroll when
+# rule 11 had said "every screen here is a canvas" since 2026-08-14:
+#
+#   "can we actually make sure that the visual design principles are things
+#    you're always reaching for? There should be a hook for that whenever you
+#    make something I look at."
+#
+# The three tiers all existed for that rule -- a ruling, an engine AND a test --
+# and all three sat in Gartera-Vault, whose test guards two builders, both in
+# that repo. Nothing could see the page he actually opens. This is the tier
+# that reaches every session regardless of repo.
+#
+# TURN-scoped, deliberately, unlike `companion_gated` and `handoff_ran`. Those
+# are session properties ("publish one Companion", "run one handoff"). This one
+# is per-thing: checking page A in turn 5 says nothing about page B in turn 20,
+# and "whenever you make something I look at" is the requirement in his words.
+
+DRAWING_EXT = (".html", ".htm", ".svg")
+# A page under tests/ or named like a fixture is not something Garrett looks
+# at. Firing on those is the coarse gate house-rules 21 point 5 forbids -- and
+# the reason check_shell_shapes.py had to be narrowed from 3 false positives to
+# 0 before anyone trusted it.
+NOT_A_SURFACE = ("/tests/", "\\tests\\", "fixture", "/node_modules/", "conftest")
+
+
+def _tool_calls(entries, boundary):
+    """(name, input-dict) for every tool call in the main loop THIS TURN."""
+    for e in entries[boundary + 1:]:
+        if e.get("type") != "assistant" or e.get("isSidechain"):
+            continue
+        content = (e.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                yield blk.get("name") or "", blk.get("input") or {}
+
+
+def drew_a_surface(entries, boundary):
+    """What this turn made that Garrett will look at, or None.
+
+    Two countable shapes, and only two:
+      * an Artifact publish -- a page with his name on it by construction;
+      * a Write/Edit to a .html/.htm/.svg path outside tests and fixtures.
+
+    Returns a short description for the refusal message, so the complaint names
+    the actual thing rather than saying "a surface".
+    """
+    try:
+        for name, inp in _tool_calls(entries, boundary):
+            if name == "Artifact":
+                action = str(inp.get("action") or "publish")
+                if action in ("publish", ""):
+                    return "an Artifact"
+            if name in ("Write", "Edit", "NotebookEdit"):
+                path = str(inp.get("file_path") or "")
+                low = path.lower()
+                if low.endswith(DRAWING_EXT) and not any(b in low for b in NOT_A_SURFACE):
+                    return path.rsplit("/", 1)[-1]
+    except (TypeError, ValueError, AttributeError):
+        return None   # fail SAFE: unreadable transcript never blocks
+    return None
+
+
+def design_checked(entries, boundary):
+    """True when this turn actually ran the design gate.
+
+    `check_design.py` has no other reason to appear in a transcript, which is
+    what makes its presence an honest proxy -- the same argument
+    `companion_gated` makes for `companion.py check`. Fails SAFE.
+    """
+    try:
+        for name, inp in _tool_calls(entries, boundary):
+            if name == "Bash" and "check_design.py" in str(inp.get("command") or ""):
+                return True
+    except (TypeError, ValueError, AttributeError):
+        return True
+    return False
+
+
+DESIGN_OPTOUT_RX = re.compile(
+    r"no design check needed|design check (?:is )?not needed|not a visual surface", re.I)
+
+
+def design_opted_out(text):
+    """An explicit, reasoned opt-out. Present for the same reason the Companion
+    has one: a gate with no legitimate exit gets worked around rather than
+    obeyed, and 'I looked and it does not apply' must be sayable out loud
+    (house-rules 6c -- a silent skip and a considered one must not render the
+    same)."""
+    return bool(DESIGN_OPTOUT_RX.search(text or ""))
+
+
 def evaluate(text, tools=None, require_block=True, handoff_done=True,
-             stock_text=None, wrapup_count=1, companion_done=True):
+             stock_text=None, wrapup_count=1, companion_done=True,
+             drew=None, design_done=True):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
@@ -743,10 +840,39 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     `companion_done` is house-rules 14's Companion gate, computed by the
     caller from the transcript (see companion_gated) — defaults to True so a
     caller that cannot say never triggers a false refusal.
+    `drew` names what this turn made for Garrett to look at (see
+    drew_a_surface), or None; `design_done` says whether check_design.py ran
+    (see design_checked). Both default to the non-firing values.
     """
     problems = []
+
+    # THE DESIGN GATE RUNS BEFORE THE TRIVIALITY EXIT, and that placement was
+    # found by testing the wiring rather than the logic (house-rules 21 step 4:
+    # a mechanism nobody has seen fire is a hypothesis). The first end-to-end
+    # run drew a page, skipped the check, and was ALLOWED -- because the reply
+    # was 33 words and `is_trivial` returns before any complaint. A short reply
+    # is a fine reason to skip a wrap-up; it is not a reason to skip checking a
+    # page Garrett is about to open. Drawing is never trivial even when the
+    # sentence about it is.
+    # The design record's own mechanism table says five of its six form rules
+    # are "convention" — a line somebody has to read. Reading is what failed:
+    # the drag rule was ruled, engined AND tested, and the board still shipped
+    # as a scroll. So a turn that DRAWS owes the one check that is arithmetic
+    # rather than taste (canvas, width use, crimson-as-fill, ground saturation,
+    # the radius scale, iOS input zoom, touch-action).
+    if drew and not design_done and not design_opted_out(text):
+        problems.append(
+            "this turn made {0} and never ran the design gate. House-rules: "
+            "run `python3 scripts/check_design.py <the built page>` and fix "
+            "what it names, or say plainly 'no design check needed' and why "
+            "(a page nobody looks at, a fixture). It measures the countable "
+            "half of DESIGN.md — whether it is a canvas, whether it uses a "
+            "wide screen, crimson as a fill not text, ground saturation, the "
+            "radius scale — never taste".format(drew)
+        )
+
     if is_trivial(text):
-        return []  # short answer, nothing to skim past
+        return problems  # short answer, nothing to skim past
 
     # house-rules 0b, cause 1. Measured 2026-09-01: four consecutive replies
     # existed only to relay PR notifications that echoed Claude's own actions,
@@ -790,6 +916,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "an Artifact — or say plainly 'no Companion needed' and why "
             "(e.g. this is one factual answer, not a working session)"
         )
+
 
     # house-rules 1b: he never checks GitHub. See GITHUB_CHECK_RX above for
     # the live miss this closes.
@@ -1715,6 +1842,109 @@ def self_test():
         fails.append("a subagent's wrap-up never reaches Garrett and must not "
                      "be counted toward this turn's total")
 
+    # ---- the design gate: a turn that DRAWS owes the design check ----------
+    # Garrett, 2026-09-13: "There should be a hook for that whenever you make
+    # something I look at." Every case below carries both halves (rule 6c): the
+    # shape that must fire, and the neighbouring shape that must stay silent.
+    # The silent ones outnumber the firing ones on purpose -- this fires on a
+    # very common tool (Write), so a version that cried wolf would be disabled
+    # rather than fixed, which is what happened to check_shell_shapes.py.
+    def _call(name, **inp):
+        return {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": name, "input": inp}]}}
+
+    _drew_html = [_user_turn, _call("Write", file_path="/tmp/board.html"), _asst_msg(GOOD)]
+    ok = drew_a_surface(_drew_html, 0) == "board.html"
+    print("  %-58s %s" % ("design: writing a .html counts as drawing", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a page written this turn is a page Garrett may look at")
+
+    _artifact = [_user_turn, _call("Artifact", file_path="/tmp/x.html"), _asst_msg(GOOD)]
+    ok = drew_a_surface(_artifact, 0) == "an Artifact"
+    print("  %-58s %s" % ("design: publishing an Artifact counts", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("an Artifact is a page with his name on it by construction")
+
+    # NARROWING 1: a test fixture is not a surface. Firing here is the coarse
+    # gate house-rules 21 point 5 forbids.
+    _fixture = [_user_turn, _call("Write", file_path="/repo/tests/fixture_page.html"),
+                _asst_msg(GOOD)]
+    ok = drew_a_surface(_fixture, 0) is None
+    print("  %-58s %s" % ("design: a tests/ page does NOT count", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a fixture is not something Garrett opens")
+
+    # NARROWING 2: ordinary work must stay silent.
+    _code = [_user_turn, _call("Write", file_path="/repo/scripts/thing.py"), _asst_msg(GOOD)]
+    ok = drew_a_surface(_code, 0) is None
+    print("  %-58s %s" % ("design: editing a .py does NOT count", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("this fires on Write; a version that fired on every edit "
+                     "would be switched off rather than fixed")
+
+    ok = design_checked([_user_turn,
+                         _call("Bash", command="python3 scripts/check_design.py site/index.html"),
+                         _asst_msg(GOOD)], 0) is True
+    print("  %-58s %s" % ("design: running check_design.py satisfies it", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the gate must be satisfiable by actually running it")
+
+    ok = design_checked(_drew_html, 0) is False
+    print("  %-58s %s" % ("design: not running it is not satisfied", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("PLANTED: without this, 'the check ran' is an absence "
+                     "asserted against nothing (house-rules 6c)")
+
+    # The complaint itself: fires, and is escapable by saying so out loud.
+    _p = evaluate(GOOD, {"Write"}, drew="board.html", design_done=False)
+    ok = any("design gate" in x for x in _p)
+    print("  %-58s %s" % ("design: drawing without checking is REFUSED", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the whole point: a page Garrett looks at, unchecked")
+
+    _p = evaluate(GOOD, {"Write"}, drew="board.html", design_done=True)
+    ok = not any("design gate" in x for x in _p)
+    print("  %-58s %s" % ("design: drawing AND checking passes", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a gate that refuses even when obeyed is a gate nobody obeys")
+
+    _p = evaluate(GOOD + "\n\nno design check needed — it is a test fixture.",
+                  {"Write"}, drew="board.html", design_done=False)
+    ok = not any("design gate" in x for x in _p)
+    print("  %-58s %s" % ("design: a stated opt-out is honoured", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a gate with no legitimate exit gets routed around, and "
+                     "'I looked and it does not apply' must be sayable")
+
+    _p = evaluate(GOOD, {"Bash"}, drew=None, design_done=False)
+    ok = not any("design gate" in x for x in _p)
+    print("  %-58s %s" % ("design: a turn that drew nothing is untouched", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("most turns draw nothing and must never see this")
+
+    # REGRESSION, found by running the hook rather than the function: a short
+    # reply hits the triviality exit, and the design complaint used to sit
+    # below it -- so "drew a page, skipped the check, said one line" was
+    # ALLOWED. Drawing is never trivial even when the sentence about it is.
+    _p = evaluate("Made the page.", {"Write"}, drew="b.html", design_done=False)
+    ok = any("design gate" in x for x in _p)
+    print("  %-58s %s" % ("design: a SHORT reply cannot skip the gate", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the triviality exit swallowed the design complaint -- "
+                     "this is the live end-to-end failure, not a hypothetical")
+    _p = evaluate("Looked it up; nothing to change.", {"Bash"}, drew=None, design_done=False)
+    ok = _p == []
+    print("  %-58s %s" % ("design: a short non-drawing reply still exits early", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("lifting the gate must not cost the triviality exit its job")
+
+    # Fails SAFE: an unreadable transcript never traps a session.
+    ok = drew_a_surface(None, 0) is None and design_checked(None, 0) is True
+    print("  %-58s %s" % ("design: unreadable input fails safe", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("every other path in this file trades a missed nag for "
+                     "never trapping a session; this must too")
+
     # ---- house-rules 2a: a tier change he can actually type ------------------
     # Replays the real 2026-09-06 miss verbatim, then guards the false-positive
     # side harder than the firing side (rule 6c): this gate lives in a file that
@@ -1792,10 +2022,14 @@ def run():
                             handoff_done=handoff_ran(entries),
                             stock_text=latest_prose(entries, b),
                             wrapup_count=wrapups,
-                            companion_done=companion_gated(entries))
+                            companion_done=companion_gated(entries),
+                            drew=drew_a_surface(entries, b),
+                            design_done=design_checked(entries, b))
         print("reply words: %d" % words(text))
         print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
         print("wrap-ups this turn: %d" % wrapups)
+        print("drew for Garrett: %s" % (drew_a_surface(entries, b) or "nothing"))
+        print("design gate ran: %s" % design_checked(entries, b))
         print("cooldown: since_last=%s require_block=%s (this is a DRY RUN -- "
               "state is not written)" % (since_last, require_block))
         print("verdict: %s" % ("BLOCK" if problems else "allow"))
@@ -1832,7 +2066,9 @@ def run():
                         handoff_done=handoff_ran(entries),
                         stock_text=latest_prose(entries, boundary),
                         wrapup_count=wrapups_this_turn(entries, boundary),
-                        companion_done=companion_gated(entries))
+                        companion_done=companion_gated(entries),
+                        drew=drew_a_surface(entries, boundary),
+                        design_done=design_checked(entries, boundary))
     if not problems:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
