@@ -109,6 +109,16 @@ import re
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import date_claims  # house-rules 40: catches a relative-time word next to a
+                     # date that contradicts it, e.g. "landed yesterday" beside
+                     # a source dated the same day as today. Lives in its own
+                     # file (not inline here) because it carries its own golden
+                     # corpus and sha-freeze, the same split shell_shapes.py
+                     # uses for the same reason -- see date_claims.py's own
+                     # docstring for why two copies exist and how they stay
+                     # provably in sync with skyne/scripts/check_date_claims.py.
+
 # ---------------------------------------------------------------- constants
 
 # Below this, a reply is a one-liner and needs no closing block. Set from the
@@ -1000,6 +1010,21 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             % ", ".join(sorted(jargon_hits)[:6])
         )
 
+    # house-rules 40, built 2026-09-14 the day it happened live: a
+    # relative-time word ("yesterday", "3 days ago") next to an explicit date
+    # that does not actually match it. Garrett's own question: "if I'd never
+    # caught the time thing is there any world it ever gets flagged by you at
+    # any point? cause it should be." See date_claims.py for what it checks
+    # and what it deliberately does not.
+    date_mismatches = date_claims.scan(text)
+    if date_mismatches:
+        problems.append(
+            "date claim(s) don't add up: %s. Check the real date (Garrett's "
+            "clock is Eastern, house-rules 19) before saying "
+            "yesterday/today/tonight/N-days-ago next to one you cite"
+            % date_claims.message(date_mismatches)
+        )
+
     # house-rules 0a-i, ruled 2026-09-09: ONE wrap-up, and it is the LAST
     # thing before Garrett can type. Unconditional, like rule 3 and rule 2a
     # above -- this is about a duplication that already happened in the turn,
@@ -1321,6 +1346,17 @@ def self_test():
     expect("jargon in the BLOCK is caught",
            SAMPLE_BODY + "\n**What I did**\nfixed the denominator\n"
            "**Why**\nit was wrong\n**TLDR**\nfixed\n", False)
+    # house-rules 40, wired through evaluate() rather than just date_claims.py's
+    # own self-test — this is the actual real miss that started the rule.
+    # Built from the REAL clock, not a hardcoded date, so this case does not
+    # rot the day after it is written: "yesterday (today's own date)" is wrong
+    # by construction on any date, and "today (today's own date)" is right by
+    # construction on any date.
+    _et_today = date_claims._real_today().isoformat()
+    expect("the real 2026-09-14 miss fails through evaluate()",
+           "This landed yesterday (%s). " % _et_today + GOOD, False)
+    expect("a correct same-day date claim still passes",
+           "This landed today (%s). " % _et_today + GOOD, True)
     for phrase in ("That's a great question. ",
                    "Here's the thing. ",
                    "Let me be honest with you here. ",
