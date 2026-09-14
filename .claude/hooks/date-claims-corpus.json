@@ -1,0 +1,114 @@
+{
+  "$comment": [
+    "Golden corpus for house-rules 40's date-claim check. TWO implementations",
+    "must agree with every row: skyne/scripts/check_date_claims.py and",
+    "Skyne-Bridge/.claude/hooks/date_claims.py -- the same split shell_shapes",
+    "already uses (house-rules 29), for the same reason: the hook has to run",
+    "standalone on a machine with only this plugin installed, and skyne is",
+    "private, so it cannot be imported across the boundary.",
+    "Each side's self-test checks its implementation against these rows AND",
+    "checks this file's sha256 against a constant in the code -- editing the",
+    "corpus on one side only fails that side, which is what forces both to move.",
+    "DO NOT hand-edit without updating BOTH CORPUS_SHA constants in the same",
+    "change -- see scripts/build_date_claims_corpus.py in skyne, which refuses",
+    "to write unless both implementations already agree on every row."
+  ],
+  "cases": [
+    {
+      "why": "the actual 2026-09-14 miss: a same-day capability called 'yesterday'",
+      "text": "as of yesterday (2026-09-14), night-shift genuinely can now rewrite a Routine's own prompt -- landed one day ago, not something you were describing after the fact.",
+      "today": "2026-09-14",
+      "expect": ["relative-date-mismatch"]
+    },
+    {
+      "why": "the corrected version of the same fact, stated same-day",
+      "text": "night-shift's own doc says 'Added 2026-09-14' -- the same date as today.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a correct yesterday claim",
+      "text": "This was filed yesterday (2026-09-13) after the session ended.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a correct N-days-ago claim",
+      "text": "The outage started 3 days ago (2026-09-11) and was fixed by morning.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a wrong N-days-ago claim -- off by one",
+      "text": "The outage started 3 days ago (2026-09-10), and was fixed by morning.",
+      "today": "2026-09-14",
+      "expect": ["relative-date-mismatch"]
+    },
+    {
+      "why": "an ISO date with no relative marker nearby -- nothing to verify",
+      "text": "The report is dated 2026-08-19 and covers the Actions overage.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a relative marker with no ISO date nearby -- nothing to check against",
+      "text": "This landed yesterday, according to Garrett.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a correct 'tonight' claim",
+      "text": "The deploy runs tonight (2026-09-14) after the freeze lifts.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a wrong 'tonight' claim",
+      "text": "The deploy ran tonight (2026-09-13) after the freeze lifted.",
+      "today": "2026-09-14",
+      "expect": ["relative-date-mismatch"]
+    },
+    {
+      "why": "a correct 'this morning' claim",
+      "text": "He caught it this morning (2026-09-14), before the standup.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a wrong 'this morning' claim",
+      "text": "He caught it this morning (2026-09-12), before the standup.",
+      "today": "2026-09-14",
+      "expect": ["relative-date-mismatch"]
+    },
+    {
+      "why": "a correct 'earlier today' claim",
+      "text": "Filed earlier today (2026-09-14) and pushed within the hour.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a correct 'N days old' claim",
+      "text": "The branch is 2 days old (2026-09-12) and still unmerged.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "a wrong 'N days old' claim",
+      "text": "The branch is 2 days old (2026-09-09) and still unmerged.",
+      "today": "2026-09-14",
+      "expect": ["relative-date-mismatch"]
+    },
+    {
+      "why": "the possessive false positive this check's first version had: 'today's' is not the marker 'today'",
+      "text": "The charter landed 2026-09-02 and the loop board shipped 2026-09-12, both unrelated to today's work.",
+      "today": "2026-09-14",
+      "expect": []
+    },
+    {
+      "why": "the same date restated two ways in one turn, both correct",
+      "text": "Filed 2026-09-14. That's today.",
+      "today": "2026-09-14",
+      "expect": []
+    }
+  ]
+}
