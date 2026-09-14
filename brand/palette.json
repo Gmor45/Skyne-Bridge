@@ -1,0 +1,12 @@
+{
+  "cyan": [
+    {
+      "key": "teal",
+      "why": "picked by Claude 2026-09-14, delegated by Garrett (\"pick an accent for bridge\"). Solved the same way the other five were, in Skyne's build_tokens.py (LCH, L*65, max in-gamut chroma): Core (azure, H248), Quest (emerald, H152), Loom (bronze, H69), Hearth (ember, H27) and Exceed (amethyst, H311) left one real gap on the hue wheel, 151.8 -> 248.4 (96.6 degrees, the widest of the five), and H200 sits almost exactly at its middle. Teal/cyan is also the ordinary UI colour for a link or a sync, which fits what Bridge actually is -- the relay an outside surface reaches the rest of the estate through.",
+      "accent": "#00afb3",
+      "ink": "#006467",
+      "contrast": 4.56,
+      "chosen": true
+    }
+  ]
+}
