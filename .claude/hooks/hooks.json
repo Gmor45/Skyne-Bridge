@@ -98,6 +98,16 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/repo_standard_gate.py\""
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/design_source_gate.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
