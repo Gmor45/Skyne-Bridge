@@ -167,11 +167,18 @@ def self_test() -> int:
     check("worktree" in got["systemMessage"].lower(),
           "the message actually says what to do")
 
-    # the real repo self-check: this session, right now, must NOT be flagged
-    # (it is a plain clone on a feature branch, per the docstring above).
+    # NOTE, found live 2026-09-16: this self-test used to assert the real
+    # checkout was NOT flagged, on the assumption a session always runs it
+    # from a feature branch. That assumption broke the moment a session
+    # legitimately checked out `main` to read something -- the self-test's
+    # own PASS/FAIL then depended on which branch happened to be checked
+    # out at test time, which is exactly the unstable-fact-as-check shape
+    # house-rules 6a warns about. The real checkout is now DESCRIBED, never
+    # asserted -- the fixture-based cases above already prove the LOGIC in
+    # isolation, which is the thing a self-test should be testing.
     real_shared, real_branch = is_shared_main_checkout(".")
-    check(real_shared is False,
-          f"this session's own checkout is not flagged (branch={real_branch!r})")
+    print(f"  info this session's real checkout: branch={real_branch!r} "
+          f"flagged={real_shared}")
 
     if fails:
         print(f"self-test: {len(fails)} FAILURE(S)")
