@@ -79,7 +79,22 @@ REPEAT_EVERY = 500
 
 
 def state_dir():
-    home = os.path.expanduser("~")
+    # `os.environ.get("HOME")` FIRST, `os.path.expanduser("~")` only as the
+    # fallback -- not the reverse. On Windows, `expanduser` prefers
+    # `USERPROFILE` over `HOME` (ntpath's own documented order), so the
+    # self-test's usual trick of pointing `HOME` at an isolated temp
+    # directory silently did nothing there: every self-test run read and
+    # wrote the REAL `~/.turn-counter/`, across runs, on that one platform.
+    # Found live: a state file for the self-test's own fake transcript path
+    # was sitting in this machine's actual home directory, left over from an
+    # earlier run, and made "crossing the first band must fire once" and
+    # "with no readable state the gate must announce" fail or pass by
+    # accident depending on what a PREVIOUS run had left behind -- not on
+    # the code under test. A production Windows session does not set `HOME`
+    # (the platform convention is `USERPROFILE`), so this changes nothing
+    # there; on POSIX, `HOME` is already what `expanduser` reads, so this is
+    # a no-op. Only the test-injection path was ever wrong.
+    home = os.environ.get("HOME") or os.path.expanduser("~")
     if not home or home == "~" or not os.access(home, os.W_OK):
         home = tempfile.gettempdir()
     return os.path.join(home, ".turn-counter")
