@@ -116,6 +116,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/design_source_gate.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree_warn.py\"",
+            "timeout": 10
           }
         ]
       }

@@ -80,3 +80,5 @@ jobs:
               sys.exit(1)
           print('guardrail_gate registered on Stop and on PreToolUse/Bash')
           PY
+      - name: Worktree warn self-test (house-rules 1a)
+        run: python3 .claude/hooks/worktree_warn.py --self-test
