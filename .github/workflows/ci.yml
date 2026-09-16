@@ -59,3 +59,5 @@ jobs:
         run: python3 .claude/hooks/repo_standard_gate.py --self-test
       - name: Design-source gate self-test (house-rules 38)
         run: python3 .claude/hooks/design_source_gate.py --self-test
+      - name: Worktree warn self-test (house-rules 1a)
+        run: python3 .claude/hooks/worktree_warn.py --self-test

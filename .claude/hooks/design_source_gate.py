@@ -82,6 +82,13 @@ Same standing as `no_push_to_main.py` and this estate's other write-surface
 guards. If skipping the doc is genuinely right here, that is Garrett's call
 to make, not Claude's to grant itself.
 
+THIS MECHANISM ENFORCES house-rules 38 (the routing table naming which
+design source governs what) and house-rules `quote-gate` -- the rule stated
+plainly as: before writing anything visual, name the file that rules it and
+QUOTE A LINE FROM THAT FILE. A table describing the file does not count.
+This gate is the visual half of that rule made mechanical; the general form
+(house-rules 33, every artifact, not only design ones) stays uncovered.
+
 Usage:
     python3 design_source_gate.py                  # the hook (JSON on stdin)
     python3 design_source_gate.py --self-test
