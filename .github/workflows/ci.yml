@@ -59,5 +59,26 @@ jobs:
         run: python3 .claude/hooks/repo_standard_gate.py --self-test
       - name: Design-source gate self-test (house-rules 38)
         run: python3 .claude/hooks/design_source_gate.py --self-test
+      - name: Guardrail gate self-test (the hard switches)
+        run: python3 .claude/hooks/guardrail_gate.py --self-test
+      - name: The guardrail gate is REGISTERED, on both events
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('.claude/hooks/hooks.json'))
+          want = 'guardrail_gate.py'
+          stop = any(want in h.get('command', '')
+                     for g in d['hooks'].get('Stop', []) for h in g.get('hooks', []))
+          bash = any(want in h.get('command', '')
+                     for g in d['hooks'].get('PreToolUse', []) if g.get('matcher') == 'Bash'
+                     for h in g.get('hooks', []))
+          # A self-test proves the logic; this proves the logic is WIRED.
+          # house-rules 21 step 4: registration and firing are different
+          # claims, and a hook nobody registered passes its own tests forever.
+          if not stop or not bash:
+              print('guardrail_gate is NOT registered — Stop:%s Bash:%s' % (stop, bash))
+              sys.exit(1)
+          print('guardrail_gate registered on Stop and on PreToolUse/Bash')
+          PY
       - name: Worktree warn self-test (house-rules 1a)
         run: python3 .claude/hooks/worktree_warn.py --self-test
