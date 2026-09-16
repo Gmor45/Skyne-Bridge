@@ -461,6 +461,45 @@ def pr_close_missing_backlog_count(text, tools):
                 and _NAMES_CONFLICT_COUNT.search(text or ""))
 
 
+# House-rules 1d: merging past a red check is ALLOWED, but only with a named
+# four-part disclosure -- what was red, why it is unrelated, what proves that,
+# what would change the answer. "The merge commit is NOT sufficient... a
+# disclosure written only into a commit body is a disclosure nobody
+# receives." This fires only when a merge happened THIS TURN and the reply's
+# own text signals a check was red at merge time -- an ordinary clean merge
+# (the overwhelming case) never triggers it.
+RED_AT_MERGE_RX = re.compile(
+    r"\bmerg(?:e|ed|ing)\b[^.\n]{0,100}\b(?:red|fail(?:ed|ing)?|"
+    r"unrelated (?:failure|check))\b|"
+    r"\b(?:red|fail(?:ed|ing))\b[^.\n]{0,100}\bmerg(?:e|ed|ing)\b",
+    re.I,
+)
+# The four parts, each a loose shape rather than exact wording -- this is
+# refuting silence on a part, not grading prose, the same stance rule 1e's
+# backlog-count check takes.
+_D1_WHAT_RED = re.compile(r"\b(?:check|job|workflow)\b[^.\n]{0,40}"
+                          r"\b(?:red|fail(?:ed|ing)?)\b|`[^`]+`\s+"
+                          r"(?:is|was)\s+red", re.I)
+_D2_UNRELATED = re.compile(r"\bunrelated\b", re.I)
+_D3_PROOF = re.compile(r"\bproves?\b|\bcitation\b|\bpredat\w*\b|"
+                       r"\bprior (?:pr|commit)\b", re.I)
+_D4_WOULD_CHANGE = re.compile(r"\bwould change\b|\bif (?:it|this) (?:were|"
+                              r"was)\b", re.I)
+
+
+def merged_past_red_missing_disclosure(text, tools):
+    """True when a red-check merge happened and the four-part disclosure is
+    not all present in the reply."""
+    if not tools or "mcp__github__merge_pull_request" not in tools:
+        return False
+    t = text or ""
+    if not RED_AT_MERGE_RX.search(t):
+        return False
+    parts = (_D1_WHAT_RED.search(t), _D2_UNRELATED.search(t),
+            _D3_PROOF.search(t), _D4_WOULD_CHANGE.search(t))
+    return not all(parts)
+
+
 # House-rules 1b: "Garrett does not check GitHub, ever... I only look at
 # these chats and Obsidian." Found live in this file's own session, 2026-09-13:
 # a permission denial on ONE action (unsubscribing from a merged PR's activity)
@@ -478,6 +517,124 @@ GITHUB_CHECK_RX = [
     re.compile(r"\bgithub\.com/[^\s)]+/pull/\d+", re.I),
     re.compile(r"\bmerge it yourself\b", re.I),
 ]
+
+
+# House-rules 9-zero: "stop saying somebody. It was CLAUDE. It's always been
+# claude." Garrett named the passive dodge directly -- "somebody built",
+# "it was decided", "this got added" -- as laundering authorship out of a
+# system whose entire premise is knowing who did what. The only honest
+# indefinite subject is genuine ignorance, and the rule says to state THAT
+# instead, so this fires on the passive/indefinite construction, not on the
+# word "somebody" alone (a sentence like "if somebody else touches this file"
+# is not the failure and must stay silent).
+SOMEBODY_RX = [
+    re.compile(r"\bsomebody\s+(?:built|wrote|made|decided|added|fixed|"
+              r"caught|found|broke)\b", re.I),
+    re.compile(r"\bit\s+was\s+decided\b", re.I),
+    re.compile(r"\bthis\s+got\s+(?:added|built|fixed|changed)\b", re.I),
+    re.compile(r"\bsomeone\s+(?:built|wrote|made|decided|added)\b", re.I),
+]
+
+
+def uses_indefinite_authorship(text):
+    """True when the reply launders authorship with a passive/indefinite subject.
+
+    He is the only human who touches these repos, so "somebody" is never
+    accurate here -- it is always Claude, or Garrett, or a named surface.
+    """
+    t = text or ""
+    return any(rx.search(t) for rx in SOMEBODY_RX)
+
+
+# House-rules 9a: Cowork's broken git access is a still-open Anthropic bug,
+# not a design choice, and the GitHub connector is a SEPARATE, also-broken
+# path. Proposing the connector as the fix for the git-proxy bug is the exact
+# miss the rule names: "do not propose the GitHub connector as the fix -- it
+# is a second, separately broken path."
+GITHUB_CONNECTOR_AS_FIX_RX = re.compile(
+    r"\b(?:use|try|connect|enable|switch to)\b[^.\n]{0,40}\bgithub\s+"
+    r"connector\b[^.\n]{0,60}\b(?:instead|fix|workaround|work around|"
+    r"solve|resolve)\b"
+    r"|\bgithub\s+connector\b[^.\n]{0,60}\b(?:should (?:fix|solve)|"
+    r"will (?:fix|solve)|is the fix|as a fix|as the fix|as a workaround)\b",
+    re.I,
+)
+
+
+def proposes_broken_connector_as_fix(text):
+    """True when the reply offers the GitHub connector as Cowork's git fix."""
+    return bool(GITHUB_CONNECTOR_AS_FIX_RX.search(text or ""))
+
+
+# House-rules 27: Cloudflare work goes to cloudflare-deploy, and the failure
+# this closes is stopping at ONE runner. "Telling him to open the Cloudflare
+# dashboard is the same failure as telling him to run wrangler locally." So a
+# reply that calls something Cloudflare-related blocked/can't/needs him, and
+# never names BOTH runners (wrangler-command.yml and cloudflare-api.yml), is
+# the exact miss the rule records -- an hour lost before either was tried.
+CLOUDFLARE_BLOCKED_RX = re.compile(
+    r"\bcloudflare\b[^.\n]{0,120}\b(?:blocked|can'?t|cannot|you'?ll need "
+    r"to|you will need to|not possible|unable to)\b"
+    r"|\b(?:blocked|can'?t|cannot|you'?ll need to)\b[^.\n]{0,120}\bcloudflare\b",
+    re.I,
+)
+NAMES_WRANGLER_RUNNER = re.compile(r"wrangler-command\.yml|wrangler runner", re.I)
+NAMES_API_RUNNER = re.compile(r"cloudflare-api\.yml|api runner", re.I)
+
+
+def cloudflare_blocked_missing_runners(text):
+    """True when a Cloudflare-blocked claim never cites both runners."""
+    t = text or ""
+    if not CLOUDFLARE_BLOCKED_RX.search(t):
+        return False
+    return not (NAMES_WRANGLER_RUNNER.search(t) and NAMES_API_RUNNER.search(t))
+
+
+# House-rules 37: a cloud permission wall is not proof a capability is
+# absent everywhere. The miss was reasoning about ANOTHER surface from what
+# is visible in THIS one -- so this fires on a reply that says a sensitive
+# action is blocked/needs permission and never mentions the local-session
+# alternative.
+PERMISSION_BLOCKED_RX = re.compile(
+    r"\b(?:permission|sensitive action|bypass permissions?)\b[^.\n]{0,80}"
+    r"\b(?:block|blocked|cannot|can'?t|not available|denied|gate)\b"
+    r"|\b(?:blocked|cannot|can'?t)\b[^.\n]{0,60}\bpermission\b",
+    re.I,
+)
+NAMES_LOCAL_ALTERNATIVE = re.compile(
+    r"\blocal\b[^.\n]{0,40}\b(?:claude code|session)\b|"
+    r"\bbypass[- ]permissions?\b", re.I,
+)
+
+
+def permission_wall_no_local_offer(text):
+    """True when a permission-wall reply never offers the local surface."""
+    t = text or ""
+    if not PERMISSION_BLOCKED_RX.search(t):
+        return False
+    return not NAMES_LOCAL_ALTERNATIVE.search(t)
+
+
+# House-rules 32: seven speaker labels (Wistin, Ward, Weir, Wander, Warden,
+# Whittle, Claude), and "Claude:" is not an eighth persona -- it names the
+# absence of one, which is why EVERY substantive reply carries one of the
+# seven, not only the six persona-shaped ones. Checked as a leading label on
+# the first non-blank line, matching how the labels are actually written in
+# practice (their own worked examples in house-rules 32 open a line with
+# "Wander:" etc).
+SPEAKER_LABELS = ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Claude")
+# Markdown bold can wrap either side of the colon ("**Claude:**" or
+# "**Claude**:"), or be absent entirely ("Claude:") -- strip asterisks before
+# matching rather than trying to enumerate every wrapping.
+SPEAKER_LABEL_RX = re.compile(r"^\s*(%s):\s" % "|".join(SPEAKER_LABELS))
+
+
+def has_speaker_label(text):
+    """True when the reply opens with one of the seven house-rules 32 labels."""
+    t = (text or "").lstrip().replace("*", "")
+    # only the first ~120 chars count as "opens with" -- a label appearing
+    # deep in the body is not the reply identifying its own speaker.
+    return bool(SPEAKER_LABEL_RX.match(t[:200]))
 
 
 def tells_garrett_to_check_github(text):
@@ -734,6 +891,47 @@ def companion_opted_out(text):
     return bool(COMPANION_OPT_OUT_RX.search(text or ""))
 
 
+# House-rules 10a: "read it again before telling him something is finished."
+# `unswept is not cold` -- an empty chain still means something looked, and a
+# session that declares work DONE without ever having opened the chain is
+# exactly the shape the rule names. Same transcript-scan pattern as
+# handoff_ran/companion_gated: a session property, fails SAFE.
+def chain_run(entries):
+    """True when THIS SESSION has run scripts/chain.py at least once."""
+    if not entries:
+        return True
+    try:
+        for e in entries:
+            blob = json.dumps(e)
+            if '"Bash"' in blob and "chain.py" in blob:
+                return True
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+# "done", "finished", "complete" as a claim ABOUT THE WORK, not as ordinary
+# language ("the design record", "a completed report" describing something
+# else). Narrowed to a claim about THIS session's own work to avoid firing on
+# every mention of the word "done" in a body discussing something else.
+CLAIMS_DONE_RX = re.compile(
+    r"\b(?:this is|it'?s|that'?s|now|all)\s+(?:done|finished|complete)\b|"
+    r"\b(?:done|finished)\.\s*$|"
+    r"\bfully\s+(?:done|finished|complete)\b",
+    re.I | re.M,
+)
+CHAIN_OPT_OUT_RX = re.compile(r"no chain (?:check )?needed|skipping the chain",
+                              re.I)
+
+
+def claims_done_without_chain(text, chain_done):
+    """True when the reply declares work finished and chain.py never ran."""
+    t = text or ""
+    if chain_done or CHAIN_OPT_OUT_RX.search(t):
+        return False
+    return bool(CLAIMS_DONE_RX.search(t))
+
+
 
 # ---- house-rules: the visual design record gets a mechanism ----------------
 #
@@ -832,7 +1030,7 @@ def design_opted_out(text):
 
 def evaluate(text, tools=None, require_block=True, handoff_done=True,
              stock_text=None, wrapup_count=1, companion_done=True,
-             drew=None, design_done=True):
+             drew=None, design_done=True, chain_done=True):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
@@ -853,6 +1051,8 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     `drew` names what this turn made for Garrett to look at (see
     drew_a_surface), or None; `design_done` says whether check_design.py ran
     (see design_checked). Both default to the non-firing values.
+    `chain_done` is house-rules 10a's chain.py gate (see chain_run) — defaults
+    to True so a caller that cannot say never triggers a false refusal.
     """
     problems = []
 
@@ -938,6 +1138,79 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "green PRs are yours to merge without asking. Try the action "
             "yourself before assuming it is blocked, and if it genuinely is, "
             "say what is blocking it here instead of pointing him at a link"
+        )
+
+    # house-rules 9-zero: never say "somebody." It was Claude.
+    if uses_indefinite_authorship(text):
+        problems.append(
+            "this reply launders authorship with a passive/indefinite "
+            "subject ('somebody built', 'it was decided', 'this got "
+            "added'). House-rules 9-zero: he is the only human who touches "
+            "these repos, so it is always Claude, or him, or a named "
+            "surface -- name which one, or say plainly you cannot tell "
+            "which surface wrote it"
+        )
+
+    # house-rules 9a: the GitHub connector is a SEPARATE broken path, never
+    # the fix for Cowork's broken git proxy.
+    if proposes_broken_connector_as_fix(text):
+        problems.append(
+            "this reply proposes the GitHub connector as a fix for Cowork's "
+            "git access. House-rules 9a: that connector is a second, "
+            "separately broken path (Anthropic issues #23775 and siblings), "
+            "not a workaround for the git-proxy bug -- Cowork writes, "
+            "Claude Code pushes"
+        )
+
+    # house-rules 27: a Cloudflare 'blocked' claim must cite BOTH runners.
+    if cloudflare_blocked_missing_runners(text):
+        problems.append(
+            "this reply calls something Cloudflare-related blocked/can't "
+            "without naming BOTH runners. House-rules 27: try "
+            "wrangler-command.yml, then cloudflare-api.yml on the same "
+            "endpoint, before it ever reaches Garrett -- and when it does, "
+            "cite both runs"
+        )
+
+    # house-rules 37: a permission-wall reply must offer the local surface.
+    if permission_wall_no_local_offer(text):
+        problems.append(
+            "this reply says a sensitive action is blocked by permissions "
+            "and never offers a local Claude Code session as the "
+            "alternative. House-rules 37: do not reason about another "
+            "surface's capabilities from what is visible in this one -- a "
+            "local session exposes bypass-permissions this picker does not"
+        )
+
+    # house-rules 1d: merging past a red check needs its four-part disclosure.
+    if merged_past_red_missing_disclosure(text, tools):
+        problems.append(
+            "this turn merged a PR past a check the reply itself calls red "
+            "or failing, without all four required parts. House-rules 1d: "
+            "say what was red by name, why it is unrelated, what PROVES "
+            "that, and what would change the answer -- missing any of the "
+            "four, the PR waits"
+        )
+
+    # house-rules 10a: 'read it again before telling him something is finished.'
+    if claims_done_without_chain(text, chain_done):
+        problems.append(
+            "this reply declares the work done/finished and scripts/chain.py "
+            "has not run this session. House-rules 10a: read the chain "
+            "before saying something is finished -- 'done' and 'done except "
+            "the things nobody asked him' look identical from inside a "
+            "session"
+        )
+
+    # house-rules 32: seven speaker labels, and "Claude:" is not an eighth
+    # persona -- it names the absence of one, so every substantive reply
+    # carries one of the seven.
+    if not has_speaker_label(text):
+        problems.append(
+            "this reply carries none of house-rules 32's seven speaker "
+            "labels (Wistin/Ward/Weir/Wander/Warden/Whittle/Claude:). Open "
+            "with whichever matches the work -- Claude: names the absence "
+            "of a persona, it is not an eighth thing to skip"
         )
 
     spent = tier_call_on_a_spent_turn(text, tools)
@@ -1277,7 +1550,16 @@ SAMPLE_BODY = (
     "seconds and both passed cleanly with nothing skipped or ignored anywhere.\n"
 )
 
-GOOD = SAMPLE_BODY + (
+# house-rules 32: SAMPLE_BODY/GOOD deliberately carry NO label of their own --
+# every fixture that composes a reply from them is responsible for putting
+# "**Claude:** " (or another of the seven) at the TRUE start of the text it
+# builds, the same way a real reply would. Baking the label into SAMPLE_BODY
+# would silently pass every "phrase + GOOD" fixture in this file regardless
+# of what the phrase actually put first, which defeats the point of an
+# opens-with check.
+LABELED = "**Claude:** "
+
+GOOD = LABELED + SAMPLE_BODY + (
     "\n**About** the turn counter on your session board\n\n"
     "**What I did**\n"
     "- Fixed a counter that kept starting over.\n"
@@ -1330,7 +1612,8 @@ def self_test():
     expect("the real 2026-09-02 opener fails",
            "You're right, and it's worse than you're saying. " + GOOD, False)
     expect("saying it plainly still passes",
-           "You are right, and the cause is one I had already documented. " + GOOD,
+           LABELED + "You are right, and the cause is one I had already "
+           "documented. " + GOOD,
            True)
     # 2026-09-07: the paraphrase that walked past both original patterns. The
     # VERBATIM sentence is the fixture for the same reason the 2026-09-02 one
@@ -1340,9 +1623,9 @@ def self_test():
            False)
     # ...and the negatives, which are the half that keeps the widening honest.
     expect("plain agreement still passes",
-           "You were right about the shallow clone. " + GOOD, True)
+           LABELED + "You were right about the shallow clone. " + GOOD, True)
     expect("an ordinary comparison still passes",
-           "This build is worse than the last one. " + GOOD, True)
+           LABELED + "This build is worse than the last one. " + GOOD, True)
     expect("jargon in the BLOCK is caught",
            SAMPLE_BODY + "\n**What I did**\nfixed the denominator\n"
            "**Why**\nit was wrong\n**TLDR**\nfixed\n", False)
@@ -1356,7 +1639,7 @@ def self_test():
     expect("the real 2026-09-14 miss fails through evaluate()",
            "This landed yesterday (%s). " % _et_today + GOOD, False)
     expect("a correct same-day date claim still passes",
-           "This landed today (%s). " % _et_today + GOOD, True)
+           LABELED + "This landed today (%s). " % _et_today + GOOD, True)
     for phrase in ("That's a great question. ",
                    "Here's the thing. ",
                    "Let me be honest with you here. ",
@@ -1379,13 +1662,13 @@ def self_test():
     # position, and both directions are asserted so it cannot become a check
     # that only ever fires.
     _f = "filler word " * 90
-    _dup = ("Body.\n\n## Recommendations\n\n- a\n\n---\n\n"
+    _dup = (LABELED + "Body.\n\n## Recommendations\n\n- a\n\n---\n\n"
             "**About** the thing.\n\n"
             "**What I did** — d.\n\n**Why** — w. " + _f +
             "\n\n**Recommendations** — r.\n\n**TLDR** — t.\n")
-    _one = ("Body. " + _f + "\n\n**About** the thing.\n\n**What I did** — d.\n\n**Why** — w.\n\n"
+    _one = (LABELED + "Body. " + _f + "\n\n**About** the thing.\n\n**What I did** — d.\n\n**Why** — w.\n\n"
             "**Recommendations** — r.\n\n**TLDR** — t.\n")
-    _none = ("Body. " + _f + "\n\n**About** the thing.\n\n**What I did** — d.\n\n**Why** — w.\n\n"
+    _none = (LABELED + "Body. " + _f + "\n\n**About** the thing.\n\n**What I did** — d.\n\n**Why** — w.\n\n"
              "**TLDR** — t.\n")
     expect("two Recommendations sections fail", _dup, False)
     expect("one, inside the block, passes", _one, True)
@@ -1551,7 +1834,7 @@ def self_test():
     # Found 2026-09-03: the block ran on every substantive turn, forever.
     # These assert the escape hatch works, and that it is NARROW -- it must
     # skip the four-section requirement and NOTHING else.
-    no_block_plain = SAMPLE_BODY  # well-formed prose, no closing block at all
+    no_block_plain = LABELED + SAMPLE_BODY  # well-formed prose, no closing block
     got = evaluate(no_block_plain, require_block=False)
     ok = got == []
     print("  %-34s %s" % ("require_block=False allows no block",
@@ -1562,7 +1845,7 @@ def self_test():
     # GOOD is well over the 60-word trivial floor on its own (SAMPLE_BODY
     # alone was one word short of it, and that word count IS the point of a
     # gate like this one — it must be checked, not eyeballed).
-    stock_no_block = "Here's the thing. " + GOOD
+    stock_no_block = LABELED + "Here's the thing. " + GOOD
     got = evaluate(stock_no_block, require_block=False)
     ok = len(got) == 1 and "stock phrase" in got[0]
     print("  %-34s %s" % ("...but a stock phrase still fires",
@@ -1579,7 +1862,7 @@ def self_test():
 
     # 2026-09-09: jargon must fire even when the block itself is not due --
     # the whole point of moving it beside the AI-ism check.
-    jargon_no_block = "I used a regex here. " + GOOD
+    jargon_no_block = LABELED + "I used a regex here. " + GOOD
     got = evaluate(jargon_no_block, require_block=False)
     ok = len(got) == 1 and "jargon" in got[0]
     print("  %-34s %s" % ("...jargon fires even off-cooldown",
@@ -2028,6 +2311,95 @@ def self_test():
     if not ok:
         fails.append('PLANTED case: an unrelated transcript must report NOT done, proving the scan can say no rather than returning True for any reason')
 
+    # ---- house-rules 9-zero: never say "somebody" ---------------------------
+    expect("9-zero: 'somebody built' fires",
+           LABELED + "Somebody built this fix last week. " + GOOD, False)
+    expect("9-zero: naming Claude by name stays silent",
+           LABELED + "Claude built this fix last week. " + GOOD, True)
+    expect("9-zero: an unrelated 'somebody' stays silent",
+           LABELED + "If somebody else edits this file later it should still "
+           "work. " + GOOD, True)
+
+    # ---- house-rules 9a: the GitHub connector is not the Cowork fix --------
+    expect("9a: proposing the connector as a fix fires",
+           LABELED + "Try the GitHub connector instead to fix this. " + GOOD, False)
+    expect("9a: naming the connector as still-broken stays silent",
+           LABELED + "The GitHub connector is a second broken path, not a "
+           "fix. " + GOOD, True)
+
+    # ---- house-rules 27: Cloudflare blocked needs both runners -------------
+    expect("27: 'Cloudflare blocked' with no runner cited fires",
+           LABELED + "This Cloudflare change is blocked and you'll need to "
+           "do it yourself. " + GOOD, False)
+    expect("27: both runners cited stays silent",
+           LABELED + "Tried wrangler-command.yml, then cloudflare-api.yml on "
+           "the same route; Cloudflare blocked a new Pages project "
+           "account-wide. " + GOOD, True)
+
+    # ---- house-rules 37: permission wall needs the local-surface offer -----
+    expect("37: a permission wall with no local offer fires",
+           LABELED + "That sensitive action is blocked by permissions "
+           "here. " + GOOD, False)
+    expect("37: offering the local surface stays silent",
+           LABELED + "That is blocked by permissions here; a local Claude "
+           "Code session exposes bypass permissions this picker does "
+           "not. " + GOOD, True)
+
+    # ---- house-rules 1d: merge past red needs all four disclosure parts ----
+    merge_tools = {"mcp__github__merge_pull_request"}
+    bad_merge = (LABELED + "Merged past a check that was red. " + GOOD)
+    good_merge = (LABELED + "Merged past a check that was red: the "
+                 "`promises` job was failing. It is unrelated -- this PR "
+                 "touches no promise. That is proved by the identical "
+                 "failure predating this branch. It would change the answer "
+                 "if the failure named a file this PR touches. 3 open PRs "
+                 "in this repo, 0 conflicting. " + GOOD)
+    expect_t("1d: a red merge with no disclosure fires", bad_merge, merge_tools, False)
+    expect_t("1d: a red merge with all four parts stays silent", good_merge,
+             merge_tools, True)
+    expect_t("1d: an ORDINARY merge (no red language) stays silent",
+             LABELED + "Merged the PR; CI was green. 3 open PRs in this "
+             "repo, 0 conflicting. " + GOOD, merge_tools, True)
+
+    # ---- house-rules 10a: 'done' without chain.py fires --------------------
+    def expect_c(name, text, chain_done, should_pass):
+        got = evaluate(text, chain_done=chain_done)
+        ok = (len(got) == 0) == should_pass
+        if not ok:
+            fails.append("%s: expected %s, got %r" % (
+                name, "pass" if should_pass else "fail", got))
+        print("  %-34s %s" % (name, "ok" if ok else "FAIL"))
+
+    expect_c("10a: 'this is done' with chain_done=False fires",
+             LABELED + "This is done. " + GOOD, False, False)
+    expect_c("10a: 'this is done' with chain_done=True stays silent",
+             LABELED + "This is done. " + GOOD, True, True)
+    expect_c("10a: ordinary prose with chain_done=False stays silent",
+             GOOD, False, True)
+    ok = chain_run([]) is True and chain_run([{"x": object()}]) is True
+    print("  %-34s %s" % ('chain_run fails SAFE when unreadable', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('an unreadable transcript must fail safe for chain_run too')
+    ok = chain_run([{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "python3 scripts/chain.py"}}]}}]) is True
+    print("  %-34s %s" % ('chain_run sees a real chain.py call', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('a real chain.py invocation must be detected')
+    ok = chain_run([{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}]) is False
+    print("  %-34s %s" % ('PLANTED: chain_run reports NOT run', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('PLANTED case: an unrelated transcript must report chain_run False')
+
+    # ---- house-rules 32: seven speaker labels -------------------------------
+    expect("32: no label at all fires", "Just an ordinary reply. " + GOOD, False)
+    for lbl in ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Claude"):
+        expect("32: %s: opens cleanly" % lbl,
+               "%s: " % lbl + "Doing that persona's work. " + GOOD, True)
+    expect("32: a bold **Claude:** opener also passes",
+           "**Claude:** Doing the work. " + GOOD, True)
+    expect("32: a label mid-body does NOT count as opening with it",
+           "This reply never opens with a label. Wander: mentioned later. "
+           + GOOD, False)
+
     if fails:
         print("\nFAILED:")
         for f in fails:
@@ -2060,7 +2432,8 @@ def run():
                             wrapup_count=wrapups,
                             companion_done=companion_gated(entries),
                             drew=drew_a_surface(entries, b),
-                            design_done=design_checked(entries, b))
+                            design_done=design_checked(entries, b),
+                            chain_done=chain_run(entries))
         print("reply words: %d" % words(text))
         print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
         print("wrap-ups this turn: %d" % wrapups)
@@ -2104,7 +2477,8 @@ def run():
                         wrapup_count=wrapups_this_turn(entries, boundary),
                         companion_done=companion_gated(entries),
                         drew=drew_a_surface(entries, boundary),
-                        design_done=design_checked(entries, boundary))
+                        design_done=design_checked(entries, boundary),
+                        chain_done=chain_run(entries))
     if not problems:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
