@@ -1,1 +1,61 @@
-bmFtZTogY2kKCiMgQWN0aW9ucyBtaW51dGVzIGFyZSBmcmVlIG9uIGEgcHVibGljIHJlcG8sIHNvIHRoaXMgY29zdHMgbm90aGluZy4KIyBwdWxsX3JlcXVlc3QgT05MWS4gVGhpcyByZXBvIG5vdyBTSElQUyB0aGUgZ2F0ZSB0aGF0IHJlZnVzZXMgYSBjaGVjawojIGZpcmluZyBvbiBib3RoIChyZXBvX3N0YW5kYXJkX2dhdGUucHksIHJ1bGUgcHItbm90LXB1c2gpLCBzbyBpdCBoYWQKIyBiZXR0ZXIgb2JleSBpdDogYSBjaGFuZ2UgY2hlY2tlZCBvbiBpdHMgUFIgYW5kIGFnYWluIG9uIHRoZSBtZXJnZSBpcwojIGJpbGxlZCB0d2ljZSBmb3Igb25lIGFuc3dlciwgYW5kIGV2ZXJ5IGpvYiByb3VuZHMgdXAgdG8gYSB3aG9sZSBtaW51dGUuCiMgRm91bmQgYnkgY2hlY2tfZXN0YXRlX2h5Z2llbmUucHkgb24gMjAyNi0wOS0xMSwgaW4gdGhpcyB2ZXJ5IGZpbGUuCm9uOgogIHB1bGxfcmVxdWVzdDoKCiMgcmVwby1zdGFuZGFyZCBydWxlIGBjYW5jZWwtc3VwZXJzZWRlZC1ydW5zYCwgMjAyNi0wOS0xNS4gQSBwdWxsX3JlcXVlc3QKIyB3b3JrZmxvdyByZXJ1bnMgb24gRVZFUlkgcHVzaCB0byB0aGF0IFBSOyB3aXRob3V0IHRoaXMgdGhlIGVhcmxpZXIgcnVuCiMgZmluaXNoZXMgYW5kIGlzIGJpbGxlZCBpbiBmdWxsIGZvciBjaGVja2luZyBhIGNvbW1pdCB0aGF0IHdhcyBhbHJlYWR5CiMgcmVwbGFjZWQuIE1lYXN1cmVkIGluIFNreW5lIHRoZSBzYW1lIGRheTogMTUgcnVucyBvbiBPTkUgYnJhbmNoLCAxMyBvbgojIGFub3RoZXIuIE1pbnV0ZXMgYXJlIGZyZWUgaGVyZSAtLSB0aGlzIGlzIGNhcnJpZWQgc28gdGhlIGVzdGF0ZS13aWRlCiMgZ2F0ZSBzdGFydHMgd2l0aCBubyBiYWNrbG9nIHRvIGZpcmUgb24uCmNvbmN1cnJlbmN5OgogIGdyb3VwOiBjaS0ke3sgZ2l0aHViLmV2ZW50LnB1bGxfcmVxdWVzdC5udW1iZXIgfX0KICBjYW5jZWwtaW4tcHJvZ3Jlc3M6IHRydWUKCiMgTGVhc3QgcHJpdmlsZWdlOiB0aGlzIGpvYiBvbmx5IHJlYWRzIHRoZSByZXBvLiBXaXRob3V0IHRoaXMgYmxvY2sgYQojIHdvcmtmbG93IGdldHMgd2hhdGV2ZXIgdGhlIHJlcG9zaXRvcnkgaGFuZHMgb3V0IGJ5IGRlZmF1bHQsIHdoaWNoIGNhbgojIGluY2x1ZGUgd3JpdGUgYWNjZXNzIGl0IG5ldmVyIHVzZXMuIHJlcG8tc3RhbmRhcmQgcnVsZQojICdsZWFzdC1wcml2aWxlZ2UtcGVybWlzc2lvbnMnLCBmcm9tIE9wZW5TU0YgU2NvcmVjYXJkJ3MgVG9rZW4tUGVybWlzc2lvbnMKIyBwcm9iZSAtLSB0aGUgZmlyc3QgZXh0ZXJuYWwgY2hlY2sgZXZlciBydW4gYWdhaW5zdCB0aGlzIGVzdGF0ZS4KcGVybWlzc2lvbnM6CiAgY29udGVudHM6IHJlYWQKCmpvYnM6CiAgcmVwbHktZ2F0ZToKICAgIHJ1bnMtb246IHVidW50dS1sYXRlc3QKICAgIHN0ZXBzOgogICAgICAtIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjcKICAgICAgLSB1c2VzOiBhY3Rpb25zL3NldHVwLXB5dGhvbkB2NwogICAgICAgIHdpdGg6CiAgICAgICAgICBweXRob24tdmVyc2lvbjogIjMuMTEiCiAgICAgIC0gbmFtZTogR2F0ZSBzZWxmLXRlc3QKICAgICAgICBydW46IHB5dGhvbjMgLmNsYXVkZS9ob29rcy9yZXBseV9nYXRlLnB5IC0tc2VsZi10ZXN0CiAgICAgIC0gbmFtZTogVHVybiBjb3VudGVyIHNlbGYtdGVzdAogICAgICAgIHJ1bjogcHl0aG9uMyAuY2xhdWRlL2hvb2tzL3R1cm5fY291bnRlci5weSAtLXNlbGYtdGVzdAogICAgICAtIG5hbWU6IERlbGVnYXRlIHJlbWluZGVyIHNlbGYtdGVzdAogICAgICAgIHJ1bjogcHl0aG9uMyAuY2xhdWRlL2hvb2tzL2RlbGVnYXRlX3JlbWluZGVyLnB5IC0tc2VsZi10ZXN0CiAgICAgIC0gbmFtZTogU2Vzc2lvbi1sZW5ndGggc3RvcCBzZWxmLXRlc3QKICAgICAgICBydW46IHB5dGhvbjMgLmNsYXVkZS9ob29rcy9zZXNzaW9uX2xlbmd0aF9zdG9wLnB5IC0tc2VsZi10ZXN0CiAgICAgIC0gbmFtZTogUHVzaC10by1tYWluIGJsb2NrZXIgc2VsZi10ZXN0CiAgICAgICAgcnVuOiBweXRob24zIC5jbGF1ZGUvaG9va3Mvbm9fcHVzaF90b19tYWluLnB5IC0tc2VsZi10ZXN0CiAgICAgIC0gbmFtZTogU2hlbGwtc2hhcGVzIHdhcm5lciBzZWxmLXRlc3QKICAgICAgICBydW46IHB5dGhvbjMgLmNsYXVkZS9ob29rcy9zaGVsbF9zaGFwZXMucHkgLS1zZWxmLXRlc3QKICAgICAgLSBuYW1lOiBEYXRlLWNsYWltcyBjaGVja2VyIHNlbGYtdGVzdCAoaG91c2UtcnVsZXMgNDAsIGluY2wuIGNvcnB1cyBzeW5jKQogICAgICAgIHJ1bjogcHl0aG9uMyAuY2xhdWRlL2hvb2tzL2RhdGVfY2xhaW1zLnB5IC0tc2VsZi10ZXN0CiAgICAgIC0gbmFtZTogUHJlLWNvbXBhY3Rpb24gc25hcHNob3Qgc2VsZi10ZXN0CiAgICAgICAgcnVuOiBweXRob24zIC5jbGF1ZGUvaG9va3MvcHJlY29tcGFjdF9zbmFwc2hvdC5weSAtLXNlbGYtdGVzdAogICAgICAtIG5hbWU6IFJvdXRpbmUgcmVwby9jb25uZWN0b3IgZ2F0ZSBzZWxmLXRlc3QKICAgICAgICBydW46IHB5dGhvbjMgLmNsYXVkZS9ob29rcy9yb3V0aW5lX3NvdXJjZXNfZ2F0ZS5weSAtLXNlbGYtdGVzdAogICAgICAtIG5hbWU6IE1lY2hhbmlzbS1nYXAgZ2F0ZSBzZWxmLXRlc3QKICAgICAgICBydW46IHB5dGhvbjMgLmNsYXVkZS9ob29rcy9tZWNoYW5pc21fZ2FwX2dhdGUucHkgLS1zZWxmLXRlc3QKICAgICAgLSBuYW1lOiBUaGUgcmVwby1zdGFuZGFyZCBnYXRlIGNhbiBzdGlsbCByZWZ1c2UKICAgICAgICBydW46IHB5dGhvbjMgLmNsYXVkZS9ob29rcy9yZXBvX3N0YW5kYXJkX2dhdGUucHkgLS1zZWxmLXRlc3QK
+name: ci
+
+# Actions minutes are free on a public repo, so this costs nothing.
+# pull_request ONLY. This repo now SHIPS the gate that refuses a check
+# firing on both (repo_standard_gate.py, rule pr-not-push), so it had
+# better obey it: a change checked on its PR and again on the merge is
+# billed twice for one answer, and every job rounds up to a whole minute.
+# Found by check_estate_hygiene.py on 2026-09-11, in this very file.
+on:
+  pull_request:
+
+# repo-standard rule `cancel-superseded-runs`, 2026-09-15. A pull_request
+# workflow reruns on EVERY push to that PR; without this the earlier run
+# finishes and is billed in full for checking a commit that was already
+# replaced. Measured in Skyne the same day: 15 runs on ONE branch, 13 on
+# another. Minutes are free here -- this is carried so the estate-wide
+# gate starts with no backlog to fire on.
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least privilege: this job only reads the repo. Without this block a
+# workflow gets whatever the repository hands out by default, which can
+# include write access it never uses. repo-standard rule
+# 'least-privilege-permissions', from OpenSSF Scorecard's Token-Permissions
+# probe -- the first external check ever run against this estate.
+permissions:
+  contents: read
+
+jobs:
+  reply-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Gate self-test
+        run: python3 .claude/hooks/reply_gate.py --self-test
+      - name: Turn counter self-test
+        run: python3 .claude/hooks/turn_counter.py --self-test
+      - name: Delegate reminder self-test
+        run: python3 .claude/hooks/delegate_reminder.py --self-test
+      - name: Session-length stop self-test
+        run: python3 .claude/hooks/session_length_stop.py --self-test
+      - name: Push-to-main blocker self-test
+        run: python3 .claude/hooks/no_push_to_main.py --self-test
+      - name: Shell-shapes warner self-test
+        run: python3 .claude/hooks/shell_shapes.py --self-test
+      - name: Date-claims checker self-test (house-rules 40, incl. corpus sync)
+        run: python3 .claude/hooks/date_claims.py --self-test
+      - name: Pre-compaction snapshot self-test
+        run: python3 .claude/hooks/precompact_snapshot.py --self-test
+      - name: Routine repo/connector gate self-test
+        run: python3 .claude/hooks/routine_sources_gate.py --self-test
+      - name: Mechanism-gap gate self-test
+        run: python3 .claude/hooks/mechanism_gap_gate.py --self-test
+      - name: The repo-standard gate can still refuse
+        run: python3 .claude/hooks/repo_standard_gate.py --self-test
+      - name: Design-source gate self-test (house-rules 38)
+        run: python3 .claude/hooks/design_source_gate.py --self-test
