@@ -1,0 +1,11 @@
+{
+  "_why": "The estate governance stamp. NOT a copy of the rules -- a copy drifts silently and partially; a version drifts loudly and totally. Canonical standard: Gmor45/Skyne data/repo-standard.json. Read this repo's obligations with: govern.py plan <repo>.",
+  "repo": "Skyne-Bridge",
+  "kind": "plugin",
+  "standard_version": "3.1.0",
+  "stamped": "2026-09-18",
+  "waivers": [],
+  "ratchet_raises": [],
+  "must_ratchet": 4,
+  "_ratchet_note": "The number of must-tier findings open when this repo was last brought to standard. It may FALL and may never RISE; govern.py check fails on a rise. Not a zero gate, because a zero gate fires on pre-existing debt rather than on the failure (house-rules 21 point 5)."
+}
