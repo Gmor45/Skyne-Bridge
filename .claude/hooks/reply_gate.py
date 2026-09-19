@@ -1731,10 +1731,21 @@ def self_test():
            "\n".join(l for l in GOOD.splitlines() if not ABOUT_RE.search(l)), False)
     expect("About present passes", GOOD, True)
     # PLANTED, and measured as a real hole before the marker required the bold:
-    # this exact reply passed with no About line at all.
+    # this exact reply passed with no About line at all. CORRECTED 2026-09-19:
+    # this case already existed and still read as passing under
+    # `reply-gate-about-must-be-bold-not-a-word` (the mutation that loosens
+    # ABOUT_RE to accept a bare word) -- not because the About check caught
+    # anything, but because the fixture had no LABELED opener, so house-rules
+    # 32's speaker-label check refused it for an unrelated reason regardless
+    # of which ABOUT_RE was in force. `expect()` only asks whether ANY
+    # complaint exists, so a confounded fixture can report "ok" for the wrong
+    # check indefinitely. Fixed by giving this fixture the same clean shape as
+    # GOOD (labeled, What/Why/TLDR all present and in order) with only the
+    # About line swapped for ordinary prose -- so the sole way it can pass is
+    # the exact hole this row exists to catch.
     expect("a bare body line starting 'About' is NOT an About line",
-           "About half the runs were flaky.\n\n" + SAMPLE_BODY +
-           "\n**What I did** - d.\n\n**Why** - w.\n\n**TLDR** - t.\n", False)
+           LABELED + SAMPLE_BODY +
+           "\nAbout half the runs were flaky.\n\n**What I did** - d.\n\n**Why** - w.\n\n**TLDR** - t.\n", False)
     expect("a bolded About adrift in the body is caught",
            "**About** something.\n\n" + SAMPLE_BODY + ("\nfiller\n" * 12) +
            "\n**What I did** - d.\n\n**Why** - w.\n\n**TLDR** - t.\n", False)
