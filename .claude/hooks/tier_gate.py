@@ -30,6 +30,12 @@ WHAT IT DOES, EVERY MESSAGE
 3. Compares, with rule 2a's soft-lock tolerance: same model family AND effort
    within one step is a MATCH. Anything else is `up` (running too low) or
    `down` (running too high).
+3b. AMENDED 2026-09-23, after the first live block landed on a throwaway note
+   (Garrett: "cut short ones and then lets hold it for when it pays off for
+   USAGE (not time, I can wait)"): a message of SHORT_WORDS words or fewer is
+   not graded at all, and a mismatch is only held when Haiku sizes the work
+   `medium` or `large`. A `small` job on the wrong tier passes as
+   `allow-small` and is still logged as a wrong-tier turn.
 4. Mismatch -> **blocks the message** and tells Garrett the exact tier. The
    message is SAVED: after `/model`, typing `go` sends it through. Saying
    `stay on <model>` overrides -- no argument, no second ask (rule 2a,
@@ -75,7 +81,7 @@ WHAT IT CANNOT SEE, SAID PLAINLY (house-rules 21 point 5)
 Env knobs:
     SKYNE_TIER_GATE=block|warn|off          (default block)
     SKYNE_TIER_GATE_GRADER=haiku|keywords   (default haiku)
-    SKYNE_TIER_GATE_TIMEOUT=<seconds>       (default 20)
+    SKYNE_TIER_GATE_TIMEOUT=<seconds>       (default 25; the hook entry allows 30)
     SKYNE_TIER_GATE_LOG=<path>              (default ~/.claude/skyne/tier-gate.jsonl)
 
 Usage:
@@ -99,6 +105,14 @@ FAMILY_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
 RECOMMENDABLE = ("haiku", "sonnet", "opus")
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 MAX_CONSECUTIVE_BLOCKS = 3
+# Garrett, 2026-09-23, after the first live block landed on a throwaway note:
+# "cut short ones and then lets hold it for when it pays off for USAGE (not
+# time, I can wait)". So: a message this short is not graded at all (saves the
+# grading call too), and a mismatch is only HELD when the grader expects the
+# work to be big enough that the switch saves usage. A small job on the wrong
+# tier passes through and is logged, never silently counted as on-tier.
+SHORT_WORDS = 8
+HOLD_SIZES = ("medium", "large")
 
 # Rule 2's own "down" tells, moved verbatim from the retired delegate_reminder.py.
 DOWN_TELLS = [
@@ -140,9 +154,12 @@ SYSTEM = (
     "docs, a summary, routine git/PR work). opus = architecture, design across "
     "several parts, 3+ conflicting constraints, visual or spatial layout, "
     "subtle debugging, ambiguous asks, writing that must be exactly right. "
-    "Effort: low = trivial, medium = normal, high = hard reasoning. When torn "
-    "between two tiers pick the HIGHER one. Reply with ONE line of JSON only: "
-    '{"model":"haiku|sonnet|opus","effort":"low|medium|high","why":"<=12 words"}'
+    "Effort: low = trivial, medium = normal, high = hard reasoning. Size = how "
+    "much work answering takes: small = one quick reply, medium = several steps "
+    "or files, large = a long multi-step build. When torn between two tiers "
+    "pick the HIGHER one. Reply with ONE line of JSON only: "
+    '{"model":"haiku|sonnet|opus","effort":"low|medium|high",'
+    '"size":"small|medium|large","why":"<=12 words"}'
 )
 
 
@@ -183,9 +200,9 @@ def keyword_grade(text: str) -> dict | None:
     if not text:
         return None
     if UP_RE.search(text):
-        return {"model": "opus", "effort": "high", "why": "rule 2 up tell"}
+        return {"model": "opus", "effort": "high", "size": "medium", "why": "rule 2 up tell"}
     if DOWN_RE.search(text):
-        return {"model": "haiku", "effort": "low", "why": "rule 2 down tell"}
+        return {"model": "haiku", "effort": "low", "size": "medium", "why": "rule 2 down tell"}
     return None
 
 
@@ -201,7 +218,11 @@ def parse_grade(raw: str) -> dict | None:
     effort = str(d.get("effort", "")).lower().strip()
     if model not in RECOMMENDABLE or effort not in ("low", "medium", "high"):
         return None
-    return {"model": model, "effort": effort, "why": str(d.get("why", ""))[:120]}
+    size = str(d.get("size", "")).lower().strip()
+    if size not in ("small", "medium", "large"):
+        size = "medium"   # unstated -> assume it could pay off, as before sizes existed
+    return {"model": model, "effort": effort, "size": size,
+            "why": str(d.get("why", ""))[:120]}
 
 
 # --------------------------------------------------------------------------
@@ -397,6 +418,8 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
     override = OVERRIDE_RE.search(text)
     pending = state.get("pending")
     is_continue = bool(CONTINUE_RE.match(text))
+    if not is_continue and not override and len(text.split()) <= SHORT_WORDS:
+        return {"action": "skip", "verdict": "short"}, state, None
 
     # 1. grade -- a bare "go"/"yes" inherits the last grade, costing nothing
     if is_continue and state.get("last_grade"):
@@ -411,11 +434,12 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
     if grade.get("error"):
         row["grader_error"] = grade["error"]
     rec_model, rec_effort = grade.get("model"), grade.get("effort")
+    size = grade.get("size") or "medium"
     row.update({"rec_model": rec_model, "rec_effort": rec_effort,
-                "why": grade.get("why")})
+                "size": size, "why": grade.get("why")})
     if rec_model:
         state["last_grade"] = {"model": rec_model, "effort": rec_effort,
-                               "why": grade.get("why")}
+                               "size": size, "why": grade.get("why")}
 
     verdict = compare(cur_model, cur_effort, rec_model, rec_effort) if rec_model else "unjudged"
     row["verdict"] = verdict
@@ -456,6 +480,12 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
         state["blocks_in_a_row"] = 0
         return row, state, None
     state.pop("override", None)
+
+    if size not in HOLD_SIZES:
+        # Wrong tier, but too little work for a switch to save usage.
+        row["action"] = "allow-small"
+        state["blocks_in_a_row"] = 0
+        return row, state, None
 
     call = (f"Tier gate: this looks like a {pretty(rec_model, rec_effort)} job"
             f" ({grade.get('why') or 'no reason given'}). You're on "
@@ -525,9 +555,9 @@ def run(payload: dict) -> dict | None:
     rows = read_transcript_tail(payload.get("transcript_path") or "")
     cur_model, cur_effort, msrc, esrc = live_model_effort(payload, rows)
     try:
-        timeout = float(os.environ.get("SKYNE_TIER_GATE_TIMEOUT") or 20)
+        timeout = float(os.environ.get("SKYNE_TIER_GATE_TIMEOUT") or 25)
     except ValueError:
-        timeout = 20.0
+        timeout = 25.0
     grader = make_grader(last_assistant_text(rows),
                          (os.environ.get("SKYNE_TIER_GATE_GRADER") or "haiku").lower(),
                          timeout)
@@ -577,19 +607,19 @@ def self_test() -> int:
     check(keyword_grade("let's scope this out and design the architecture")["model"] == "opus", "up tell -> opus")
     check(keyword_grade("what's for lunch") is None, "no tell -> no grade (unjudged, not match)")
 
-    def fixed(model, effort):
-        return lambda t: {"model": model, "effort": effort, "why": "fixture", "grader": "haiku",
-                          "latency_ms": 5, "cost_usd": 0.004}
+    def fixed(model, effort, size="medium"):
+        return lambda t: {"model": model, "effort": effort, "size": size, "why": "fixture",
+                          "grader": "haiku", "latency_ms": 5, "cost_usd": 0.004}
 
     # match -> allow, silent
-    r, s, o = decide("fix the typo in README", "claude-sonnet-5", "medium", {}, fixed("sonnet", "medium"))
+    r, s, o = decide("please fix the small typo in the README file for me today", "claude-sonnet-5", "medium", {}, fixed("sonnet", "medium"))
     check(r["action"] == "allow" and o is None, "a match is allowed and silent")
 
     # mismatch -> block, message saved, exact tier named
-    r, s, o = decide("rename 12 files", "claude-opus-5-5", "high", {}, fixed("haiku", "low"))
+    r, s, o = decide("please rename these twelve files in docs to kebab case for me", "claude-opus-5-5", "high", {}, fixed("haiku", "low"))
     check(r["action"] == "block" and o and o.get("decision") == "block", "a mismatch BLOCKS")
     check("/model haiku" in o["reason"] and "stay on opus" in o["reason"], "the block names the command and the override")
-    check(s.get("pending", {}).get("prompt") == "rename 12 files", "the blocked message is saved")
+    check(s.get("pending", {}).get("prompt") == "please rename these twelve files in docs to kebab case for me", "the blocked message is saved")
 
     # after /model, "go" resumes with the saved message and costs no grading call
     called = []
@@ -598,28 +628,28 @@ def self_test() -> int:
         return {"model": "opus", "effort": "high", "grader": "haiku"}
     r2, s2, o2 = decide("go", "claude-haiku-4-5", "low", s, spy)
     check(not called, "a bare 'go' must not pay for a grading call")
-    check(r2["action"] == "resume" and "rename 12 files" in o2["hookSpecificOutput"]["additionalContext"],
+    check(r2["action"] == "resume" and "please rename these twelve files in docs to kebab case for me" in o2["hookSpecificOutput"]["additionalContext"],
           "'go' after switching resumes with the saved message")
     check("pending" not in s2, "resuming clears the saved message")
 
     # override: allowed, and HELD until the recommendation changes
     r3, s3, o3 = decide("stay on opus, just do it", "claude-opus-5-5", "high", s, fixed("haiku", "low"))
-    check(r3["action"] == "override" and "rename 12 files" in json.dumps(o3), "override passes the held message through")
-    r4, s4, _ = decide("rename 3 more files", "claude-opus-5-5", "high", s3, fixed("haiku", "low"))
+    check(r3["action"] == "override" and "please rename these twelve files in docs to kebab case for me" in json.dumps(o3), "override passes the held message through")
+    r4, s4, _ = decide("now rename three more files in the scripts folder the same way", "claude-opus-5-5", "high", s3, fixed("haiku", "low"))
     check(r4["action"] == "override-held", "an override holds for the same call -- no second ask")
-    r5, s5, o5 = decide("now redesign the whole console", "claude-opus-5-5", "high", s4, fixed("sonnet", "low"))
+    r5, s5, o5 = decide("now redesign the whole console layout so the panels share one grid", "claude-opus-5-5", "high", s4, fixed("sonnet", "low"))
     check(r5["action"] == "block", "a NEW recommendation re-arms the gate")
 
     # never traps: third consecutive block releases
     st = {}
     actions = []
     for _ in range(3):
-        rr, st, oo = decide("rename files again", "claude-opus-5-5", "high", st, fixed("haiku", "low"))
+        rr, st, oo = decide("rename the files again the same way as last time please", "claude-opus-5-5", "high", st, fixed("haiku", "low"))
         actions.append(rr["action"])
     check(actions == ["block", "block", "released"], f"three blocks in a row must release, got {actions}")
 
     # warn mode never blocks
-    r6, _, o6 = decide("rename 12 files", "claude-opus-5-5", "high", {}, fixed("haiku", "low"), mode="warn")
+    r6, _, o6 = decide("please rename these twelve files in docs to kebab case for me", "claude-opus-5-5", "high", {}, fixed("haiku", "low"), mode="warn")
     check(r6["action"] == "warn" and "decision" not in (o6 or {}), "warn mode injects context, never blocks")
 
     # slash commands are never graded
@@ -627,8 +657,28 @@ def self_test() -> int:
     check(r7["action"] == "skip" and o7 is None, "a slash command is skipped")
 
     # an unjudged message is allowed AND logged as unjudged, never as match
-    r8, _, _ = decide("hmm", "claude-opus-5-5", "high", {}, lambda t: {"grader": "none", "error": "timeout"})
+    r8, _, _ = decide("hmm let me think about what the best next step here is", "claude-opus-5-5", "high", {}, lambda t: {"grader": "none", "error": "timeout"})
     check(r8["verdict"] == "unjudged" and r8["action"] == "allow", "no grade -> unjudged, allowed")
+
+    # 2026-09-23 ruling: short messages are not graded; small jobs are not held
+    calls = []
+    def counting(t):
+        calls.append(t)
+        return {"model": "haiku", "effort": "low", "size": "medium", "grader": "haiku"}
+    r9, _, o9 = decide("ok cool thanks, noted", "claude-opus-5-5", "high", {}, counting)
+    check(r9["action"] == "skip" and r9["verdict"] == "short" and o9 is None and not calls,
+          "a short message is skipped WITHOUT paying for a grading call")
+    r10, s10, o10 = decide("remind me later to check the budget page for the actions minutes",
+                           "claude-opus-5-5", "high", {}, fixed("haiku", "low", "small"))
+    check(r10["action"] == "allow-small" and o10 is None and "pending" not in s10,
+          "a SMALL job on the wrong tier passes through -- a switch would not pay off")
+    check(r10["verdict"] == "down", "a passed small job is still logged as a wrong-tier turn")
+    r11, _, o11 = decide("rewrite every script in the repo to use the new logging helper",
+                         "claude-opus-5-5", "high", {}, fixed("haiku", "low", "large"))
+    check(r11["action"] == "block" and o11 and o11.get("decision") == "block",
+          "a LARGE job on the wrong tier is still held -- that is where usage is saved")
+    check(parse_grade('{"model":"sonnet","effort":"low","size":"huge"}')["size"] == "medium",
+          "an unknown size is read as medium, never silently as small")
 
     # live model/effort reading: a /model switch newer than the last reply wins
     rows = [{"type": "assistant", "message": {"model": "claude-opus-5-5", "content": [{"type": "text", "text": "done"}]}},
@@ -675,7 +725,7 @@ def self_test() -> int:
         with open(tr, "w") as f:
             f.write(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5-5", "content": "ok"}}) + "\n")
         os.environ["CLAUDE_EFFORT"] = "high"
-        o = run({"prompt": "please rename the files in docs/", "session_id": "s1", "transcript_path": tr})
+        o = run({"prompt": "please rename all of the files in the docs folder to kebab case", "session_id": "s1", "transcript_path": tr})
         check(isinstance(o, dict) and o.get("decision") == "block", "run(): opus on a rename is blocked")
         run({"prompt": "what is 2+2", "session_id": "s1", "transcript_path": tr})
         with open(os.environ["SKYNE_TIER_GATE_LOG"]) as f:
@@ -691,7 +741,7 @@ def self_test() -> int:
                         capture_output=True, text=True)
     check(cp.returncode == 0 and not cp.stdout.strip(), "garbage stdin exits 0 and prints nothing")
 
-    total = 41
+    total = 46
     if fails:
         for f in fails:
             print("SELF-TEST FAIL:", f)
@@ -708,7 +758,7 @@ def main() -> None:
         i = sys.argv.index("--grade")
         text = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
         print(json.dumps(make_grader("", (os.environ.get("SKYNE_TIER_GATE_GRADER") or "haiku").lower(),
-                                     float(os.environ.get("SKYNE_TIER_GATE_TIMEOUT") or 20))(text)))
+                                     float(os.environ.get("SKYNE_TIER_GATE_TIMEOUT") or 25))(text)))
         sys.exit(0)
     try:
         raw = sys.stdin.read()
