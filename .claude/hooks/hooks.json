@@ -130,8 +130,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/delegate_reminder.py\"",
-            "timeout": 10
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/tier_gate.py\"",
+            "timeout": 30
           },
           {
             "type": "command",

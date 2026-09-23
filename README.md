@@ -144,6 +144,24 @@ it was asked, report counts rather than impressions, stop and ask rather than
 guess at anything ambiguous, and never touch git — that stays with whichever
 session spawned it.
 
+**RETIRED 2026-09-23 — read this before the paragraph below it.**
+`delegate_reminder.py` is now a silent tombstone and is unregistered. Its job
+moved into **`.claude/hooks/tier_gate.py`**, which grades EVERY message with
+Haiku (through the `claude` CLI already on the machine, falling back to the
+same keyword tells), compares the grade to the live model and effort, and
+**holds a message that is on the wrong tier** until `/model` matches or
+Garrett says `stay on <model>`. The held message is saved; `go` sends it.
+Every message writes one row to `~/.claude/skyne/tier-gate.jsonl`, which
+`skyne/scripts/tier_gate_report.py` scores per session. The file is kept, not
+deleted, because a registered-but-missing script exits 2 on UserPromptSubmit,
+which blocks the prompt — and cloud containers still register the old path.
+
+```bash
+python3 .claude/hooks/tier_gate.py --self-test          # 41 checks
+python3 .claude/hooks/tier_gate.py --grade "some prompt text"
+SKYNE_TIER_GATE=warn   # or off — say the tier instead of holding the message
+```
+
 **`.claude/hooks/delegate_reminder.py`**, a `UserPromptSubmit` hook. On every
 prompt it scans for rule 2's own mechanical tells (a fixed phrase list lifted
 verbatim from the rule, not a guessed vocabulary) and, on a hit, adds one line
