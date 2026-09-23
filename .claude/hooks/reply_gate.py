@@ -1205,7 +1205,18 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # house-rules 32: seven speaker labels, and "Claude:" is not an eighth
     # persona -- it names the absence of one, so every substantive reply
     # carries one of the seven.
-    if not has_speaker_label(text):
+    #
+    # CORRECTED 2026-09-23: `text` is every block of the turn joined, so it
+    # always opens with the FIRST block -- often a one-line progress note sent
+    # before any real reply. A labelled re-send after a rejection could then
+    # never pass, and the gate looped until it gave up (measured three times
+    # in session_01ESErNRpdueVjJDFBfgV6iE). Either the turn's first block or
+    # its NEWEST block (`stock_text`, from latest_prose) opening with a label
+    # now counts -- the same first-vs-newest fix this file already made for
+    # the stock-phrase check.
+    labelled = has_speaker_label(text) or (
+        stock_text is not None and has_speaker_label(stock_text))
+    if not labelled:
         problems.append(
             "this reply carries none of house-rules 32's seven speaker "
             "labels (Wistin/Ward/Weir/Wander/Warden/Whittle/Claude:). Open "
@@ -2410,6 +2421,27 @@ def self_test():
     expect("32: a label mid-body does NOT count as opening with it",
            "This reply never opens with a label. Wander: mentioned later. "
            + GOOD, False)
+
+    # The 2026-09-23 loop, replayed: an unlabelled progress note first, then a
+    # labelled reply. The joined text opens unlabelled; the newest block does
+    # not. Both directions, so the widening cannot turn into "always passes".
+    _note = "Checking the checks now."
+    _reply = "Claude: Here is where it landed. " + GOOD
+    got = evaluate(_note + "\n" + _reply, stock_text=_reply)
+    ok = not any("speaker" in p for p in got)
+    print("  %-58s %s" % ("32: labelled NEWEST block passes after an unlabelled note",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a labelled newest block must pass even when the turn "
+                     "opened with an unlabelled progress note (the 2026-09-23 loop)")
+    _bare = "Here is where it landed. " + GOOD
+    got = evaluate(_note + "\n" + _bare, stock_text=_bare)
+    ok = any("speaker" in p for p in got)
+    print("  %-58s %s" % ("32: PLANTED -- unlabelled first AND newest still fires",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("PLANTED: a turn with no label on its first or newest "
+                     "block must still fire house-rules 32")
 
     if fails:
         print("\nFAILED:")
