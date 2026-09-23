@@ -1130,7 +1130,10 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
 
     # house-rules 1b: he never checks GitHub. See GITHUB_CHECK_RX above for
     # the live miss this closes.
-    if tells_garrett_to_check_github(text):
+    # CORRECTED 2026-09-23: scan the NEWEST block when the caller has it, same
+    # reason as house-rules 32 below -- the joined turn keeps the rejected
+    # draft, so a corrected re-send could never clear this and the gate looped.
+    if tells_garrett_to_check_github(text if stock_text is None else stock_text):
         problems.append(
             "this reply tells Garrett to go look at, open, or merge something "
             "on GitHub himself. House-rules 1b: he has said outright he never "
@@ -2080,6 +2083,20 @@ def self_test():
     print("  %-34s %s" % ('1b: reporting a merge as fact stays silent', "ok" if ok else "FAIL"))
     if not ok:
         fails.append('stating what was done is not telling him to go look')
+    _blk = "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"
+    _fixed_1b = ("Claude: " + SAMPLE_BODY + "\nNothing for you to do; I merge "
+                 "both myself once green." + _blk)
+    _missed_1b = "Claude: " + SAMPLE_BODY + "\n" + _real_miss + _blk
+    got = evaluate(_missed_1b + "\n" + _fixed_1b, stock_text=_fixed_1b)
+    ok = not any("GitHub himself" in g for g in got)
+    print("  %-34s %s" % ('1b: a corrected newest block clears it', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('1b must read the newest block, or a corrected re-send can never pass')
+    got = evaluate(_fixed_1b + "\n" + _missed_1b, stock_text=_missed_1b)
+    ok = any("GitHub himself" in g for g in got)
+    print("  %-34s %s" % ('1b: PLANTED -- the miss as newest still fires', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('PLANTED: the real miss in the newest block must still fire 1b')
     ok = any("GitHub" in g or "1b" in g for g in evaluate(
         SAMPLE_BODY + "\n" + _real_miss + "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"))
     print("  %-34s %s" % ('1b: evaluate() refuses the real miss', "ok" if ok else "FAIL"))
