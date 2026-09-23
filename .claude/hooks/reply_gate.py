@@ -1286,7 +1286,10 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # Jargon: whole reply, not just the block (widened 2026-09-09 — see
     # BANNED_JARGON's own comment). Checked here, alongside AI-isms above, so
     # it fires whether or not the closing block is due this turn.
-    low_text = (text or "").lower()
+    # CORRECTED 2026-09-23: reads `scan` (the newest block when the caller
+    # has it), like the stock-phrase check above -- the joined turn keeps a
+    # rejected draft, so a plain-English re-send could never clear it.
+    low_text = (scan or "").lower()
     jargon_hits = [w for w in BANNED_JARGON if re.search(r"\b%s\b" % re.escape(w), low_text)]
     if jargon_hits:
         problems.append(
@@ -2084,6 +2087,19 @@ def self_test():
     if not ok:
         fails.append('stating what was done is not telling him to go look')
     _blk = "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"
+    _jblk = "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"
+    _jbad = "Claude: " + SAMPLE_BODY + "\nA refactor across the repo." + _jblk
+    _jgood = "Claude: " + SAMPLE_BODY + "\nA big cleanup across the repo." + _jblk
+    got = evaluate(_jbad + "\n" + _jgood, stock_text=_jgood)
+    ok = not any("jargon anywhere" in g for g in got)
+    print("  %-34s %s" % ('jargon: a plain newest block clears it', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('jargon must read the newest block, or a plain re-send can never pass')
+    got = evaluate(_jgood + "\n" + _jbad, stock_text=_jbad)
+    ok = any("jargon anywhere" in g for g in got)
+    print("  %-34s %s" % ('jargon: PLANTED -- jargon in newest fires', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('PLANTED: jargon in the newest block must still fire')
     _fixed_1b = ("Claude: " + SAMPLE_BODY + "\nNothing for you to do; I merge "
                  "both myself once green." + _blk)
     _missed_1b = "Claude: " + SAMPLE_BODY + "\n" + _real_miss + _blk
