@@ -1054,6 +1054,14 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     `chain_done` is house-rules 10a's chain.py gate (see chain_run) — defaults
     to True so a caller that cannot say never triggers a false refusal.
     """
+    # CORRECTED 2026-09-23: checks that look for a BAD PHRASE read the newest
+    # block when the caller passes it. The joined turn still holds any draft
+    # this gate already rejected, and a phrase in that draft can never be
+    # rewritten away -- measured as repeat loops in one session on the speaker
+    # label, the GitHub-link check, jargon and the new-chat check. Checks that
+    # look for something MISSING (a count, a disclosure, an opt-out) keep the
+    # whole turn, because saying it anywhere in the reply satisfies them.
+    newest = text if stock_text is None else stock_text
     problems = []
 
     # THE DESIGN GATE RUNS BEFORE THE TRIVIALITY EXIT, and that placement was
@@ -1102,7 +1110,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # house-rules 3. Placed here, after the echo check and before the shape
     # checks, for the same reason 0b is: telling a reply that should have run
     # the handoff to fix its heading order is the wrong instruction.
-    if not handoff_done and recommends_new_chat(text):
+    if not handoff_done and recommends_new_chat(newest):
         problems.append(
             "this reply tells Garrett to end the chat or start a new one, and "
             "/handoff has not run this session. House-rules 3: 'Telling him to "
@@ -1133,7 +1141,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # CORRECTED 2026-09-23: scan the NEWEST block when the caller has it, same
     # reason as house-rules 32 below -- the joined turn keeps the rejected
     # draft, so a corrected re-send could never clear this and the gate looped.
-    if tells_garrett_to_check_github(text if stock_text is None else stock_text):
+    if tells_garrett_to_check_github(newest):
         problems.append(
             "this reply tells Garrett to go look at, open, or merge something "
             "on GitHub himself. House-rules 1b: he has said outright he never "
@@ -1144,7 +1152,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
         )
 
     # house-rules 9-zero: never say "somebody." It was Claude.
-    if uses_indefinite_authorship(text):
+    if uses_indefinite_authorship(newest):
         problems.append(
             "this reply launders authorship with a passive/indefinite "
             "subject ('somebody built', 'it was decided', 'this got "
@@ -1156,7 +1164,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
 
     # house-rules 9a: the GitHub connector is a SEPARATE broken path, never
     # the fix for Cowork's broken git proxy.
-    if proposes_broken_connector_as_fix(text):
+    if proposes_broken_connector_as_fix(newest):
         problems.append(
             "this reply proposes the GitHub connector as a fix for Cowork's "
             "git access. House-rules 9a: that connector is a second, "
@@ -1166,7 +1174,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
         )
 
     # house-rules 27: a Cloudflare 'blocked' claim must cite BOTH runners.
-    if cloudflare_blocked_missing_runners(text):
+    if cloudflare_blocked_missing_runners(newest):
         problems.append(
             "this reply calls something Cloudflare-related blocked/can't "
             "without naming BOTH runners. House-rules 27: try "
@@ -1176,7 +1184,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
         )
 
     # house-rules 37: a permission-wall reply must offer the local surface.
-    if permission_wall_no_local_offer(text):
+    if permission_wall_no_local_offer(newest):
         problems.append(
             "this reply says a sensitive action is blocked by permissions "
             "and never offers a local Claude Code session as the "
@@ -1286,7 +1294,10 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # Jargon: whole reply, not just the block (widened 2026-09-09 — see
     # BANNED_JARGON's own comment). Checked here, alongside AI-isms above, so
     # it fires whether or not the closing block is due this turn.
-    low_text = (text or "").lower()
+    # CORRECTED 2026-09-23: reads `scan` (the newest block when the caller
+    # has it), like the stock-phrase check above -- the joined turn keeps a
+    # rejected draft, so a plain-English re-send could never clear it.
+    low_text = (scan or "").lower()
     jargon_hits = [w for w in BANNED_JARGON if re.search(r"\b%s\b" % re.escape(w), low_text)]
     if jargon_hits:
         problems.append(
@@ -1303,7 +1314,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # caught the time thing is there any world it ever gets flagged by you at
     # any point? cause it should be." See date_claims.py for what it checks
     # and what it deliberately does not.
-    date_mismatches = date_claims.scan(text)
+    date_mismatches = date_claims.scan(newest)
     if date_mismatches:
         problems.append(
             "date claim(s) don't add up: %s. Check the real date (Garrett's "
@@ -2084,6 +2095,31 @@ def self_test():
     if not ok:
         fails.append('stating what was done is not telling him to go look')
     _blk = "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"
+    _jblk = "\n**What I did**\nx\n**Why**\ny\n**TLDR**\nz\n"
+    _nc_bad = "Claude: " + SAMPLE_BODY + "\nStart a fresh chat for the next part." + _jblk
+    _nc_good = "Claude: " + SAMPLE_BODY + "\nNothing else is waiting." + _jblk
+    got = evaluate(_nc_bad + "\n" + _nc_good, handoff_done=False, stock_text=_nc_good)
+    ok = not any("/handoff has not run" in g for g in got)
+    print("  %-34s %s" % ('3: a withdrawn new-chat line clears', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('rule 3 must read the newest block, or a withdrawn recommendation can never pass')
+    got = evaluate(_nc_good + "\n" + _nc_bad, handoff_done=False, stock_text=_nc_bad)
+    ok = any("/handoff has not run" in g for g in got)
+    print("  %-34s %s" % ('3: PLANTED -- new-chat in newest fires', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('PLANTED: a new-chat recommendation in the newest block must still fire')
+    _jbad = "Claude: " + SAMPLE_BODY + "\nA refactor across the repo." + _jblk
+    _jgood = "Claude: " + SAMPLE_BODY + "\nA big cleanup across the repo." + _jblk
+    got = evaluate(_jbad + "\n" + _jgood, stock_text=_jgood)
+    ok = not any("jargon anywhere" in g for g in got)
+    print("  %-34s %s" % ('jargon: a plain newest block clears it', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('jargon must read the newest block, or a plain re-send can never pass')
+    got = evaluate(_jgood + "\n" + _jbad, stock_text=_jbad)
+    ok = any("jargon anywhere" in g for g in got)
+    print("  %-34s %s" % ('jargon: PLANTED -- jargon in newest fires', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append('PLANTED: jargon in the newest block must still fire')
     _fixed_1b = ("Claude: " + SAMPLE_BODY + "\nNothing for you to do; I merge "
                  "both myself once green." + _blk)
     _missed_1b = "Claude: " + SAMPLE_BODY + "\n" + _real_miss + _blk
