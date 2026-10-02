@@ -31,6 +31,18 @@ on:
     paths:
       - '.github/workflows/delete-branch.yml'
 
+# Least privilege: nothing by default. The one job below asks for exactly
+# what deleting a ref needs, at job level, because a reusable-workflow call
+# takes its token from the calling job.
+permissions: {}
+
+# Two runs on the same ref and event would do the same work, so the newer one
+# wins. Keyed by event as well, so the one-time pull_request run can never
+# cancel a real dispatch.
+concurrency:
+  group: delete-branch-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   cleanup:
     if: ${{ github.event_name == 'workflow_dispatch' }}
