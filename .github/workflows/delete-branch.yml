@@ -1,10 +1,22 @@
-# Deletes stale branches in THIS repo, via the shared definition in
-# Gmor45/skyne (Garrett's 2026-08-28 ruling, "Good to delete stale things":
-# a branch whose head is in a merged PR, or 7+ days untouched with no PR at
-# all, is safe to delete; an open PR is never touched). See
-# skyne/.github/workflows/branch-cleanup.yml for the actual policy and its
-# reasoning -- this file is deliberately thin and carries none of it, so
-# there is exactly one copy of the logic to keep correct.
+# Deletes stale branches in THIS repo. Policy is Garrett's 2026-08-28 ruling
+# ("Good to delete stale things", skyne DECISIONS.md): a branch whose head is in
+# a merged PR, or 7+ days untouched with no PR at all, is deleted; an open PR is
+# never touched; a branch with a closed-unmerged PR is skipped.
+#
+# CORRECTED 2026-10-02 -- this repo can NOT call the shared copy, so the job is
+# inlined here. Read this before trusting the "one copy" claim anywhere else.
+# The other Gmor45 repos call Gmor45/skyne/.github/workflows/branch-cleanup.yml
+# via `uses:`. This repo is PUBLIC and skyne is PRIVATE, and GitHub refuses a
+# public repo calling a private repo's reusable workflow -- no setting fixes
+# it. The thin caller merged as #61 failed at startup with zero jobs:
+#   error parsing called workflow ... branch-cleanup.yml@main : workflow was not found
+# GitHub docs: a reusable workflow in a private repository can be used only by
+# private repositories (docs.github.com, "Reusing workflow configurations").
+#
+# So the step below is a COPY of skyne's branch-cleanup.yml `cleanup` step.
+# skyne's file is canonical. Change the policy THERE first, then copy the step
+# here by hand. Nothing checks the two agree yet -- said plainly rather than
+# implied (house-rules 21 point 5).
 #
 # Why a workflow has to do this at all: a Claude Code session's git
 # credentials can create and update refs, but the sandbox's agent proxy
@@ -31,9 +43,6 @@ on:
     paths:
       - '.github/workflows/delete-branch.yml'
 
-# Least privilege: nothing by default. The one job below asks for exactly
-# what deleting a ref needs, at job level, because a reusable-workflow call
-# takes its token from the calling job.
 permissions: {}
 
 # Two runs on the same ref and event would do the same work, so the newer one
@@ -46,9 +55,65 @@ concurrency:
 jobs:
   cleanup:
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: read
-    uses: Gmor45/skyne/.github/workflows/branch-cleanup.yml@main
-    with:
-      dry_run: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - name: Delete merged and dead branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          # Branches that exist on purpose but look abandoned to the two delete
+          # rules below (no PR, untouched for a while). `heartbeat` is
+          # session-digest's orphan heartbeat ref: it carries no PR by design
+          # and is only touched when the digest runs, so any gap of 7+ days
+          # between runs makes it read as 7d-stale-no-PR and the next cleanup
+          # would delete it, taking the digest's liveness signal with it.
+          # Space-separated; add a name here instead of weakening the 7-day rule.
+          PROTECTED="heartbeat"
+          deleted=0; skipped=0; kept_open=0; kept_protected=0
+          while IFS=$'\t' read -r branch sha; do
+            [ "$branch" = "$DEFAULT_BRANCH" ] && continue
+            case " $PROTECTED " in
+              *" $branch "*)
+                echo "KEEP  (protected)    $branch"
+                kept_protected=$((kept_protected+1)); continue ;;
+            esac
+            open_prs=$(gh api "repos/$REPO/pulls?head=$OWNER:$branch&state=open" --jq 'length')
+            if [ "$open_prs" -gt 0 ]; then
+              echo "KEEP  (open PR)      $branch"
+              kept_open=$((kept_open+1)); continue
+            fi
+            merged=$(gh api "repos/$REPO/pulls?head=$OWNER:$branch&state=closed" \
+              --jq '[.[] | select(.merged_at != null)] | length')
+            reason=""
+            if [ "$merged" -gt 0 ]; then
+              reason="merged-PR"
+            else
+              any_pr=$(gh api "repos/$REPO/pulls?head=$OWNER:$branch&state=all" --jq 'length')
+              tip_date=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.committer.date')
+              if [ "$any_pr" -eq 0 ] && [[ "$tip_date" < "$cutoff" ]]; then
+                reason="7d-stale-no-PR"
+              fi
+            fi
+            if [ -z "$reason" ]; then
+              echo "SKIP  (not in policy) $branch"
+              skipped=$((skipped+1)); continue
+            fi
+            echo "DELETE ($reason) $branch @ $sha"
+            if [ "$DRY_RUN" != "true" ]; then
+              gh api -X DELETE "repos/$REPO/git/refs/heads/$branch"
+            fi
+            deleted=$((deleted+1))
+          done < <(gh api --paginate "repos/$REPO/branches?per_page=100" \
+            --jq '.[] | [.name, .commit.sha] | @tsv')
+          echo "---"
+          echo "deleted=$deleted kept_open=$kept_open kept_protected=$kept_protected skipped=$skipped dry_run=$DRY_RUN"
+          echo "(recover any branch: gh api -X POST repos/$REPO/git/refs -f ref=refs/heads/<name> -f sha=<logged sha>)"
