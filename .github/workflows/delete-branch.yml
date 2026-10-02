@@ -91,8 +91,17 @@ jobs:
               echo "KEEP  (open PR)      $branch"
               kept_open=$((kept_open+1)); continue
             fi
+            # "Whose HEAD is in a merged PR" (the 2026-08-28 ruling) means the
+            # branch's CURRENT tip is the commit that merged -- not merely that
+            # some PR from this branch name once merged. Session branch names
+            # get reused (claude/loving-tesla-2vcqyj had merged PRs in 11 repos
+            # on 2026-10-02 and was pushed to again the same day), and a reused
+            # name with new commits and no PR yet read as merged-PR and was
+            # deletable. A tip that moved since the merge is not in the merged
+            # PR, so it falls through to SKIP below (any PR at all -> not
+            # 7d-stale-no-PR). $sha is a hex commit id, safe to interpolate.
             merged=$(gh api "repos/$REPO/pulls?head=$OWNER:$branch&state=closed" \
-              --jq '[.[] | select(.merged_at != null)] | length')
+              --jq "[.[] | select(.merged_at != null and .head.sha == \"$sha\")] | length")
             reason=""
             if [ "$merged" -gt 0 ]; then
               reason="merged-PR"
