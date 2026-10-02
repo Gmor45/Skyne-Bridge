@@ -1,0 +1,54 @@
+# Deletes stale branches in THIS repo, via the shared definition in
+# Gmor45/skyne (Garrett's 2026-08-28 ruling, "Good to delete stale things":
+# a branch whose head is in a merged PR, or 7+ days untouched with no PR at
+# all, is safe to delete; an open PR is never touched). See
+# skyne/.github/workflows/branch-cleanup.yml for the actual policy and its
+# reasoning -- this file is deliberately thin and carries none of it, so
+# there is exactly one copy of the logic to keep correct.
+#
+# Why a workflow has to do this at all: a Claude Code session's git
+# credentials can create and update refs, but the sandbox's agent proxy
+# answers 403 to a ref *deletion*, and no GitHub MCP tool deletes refs
+# either. Actions holds a token trusted to write to this repo; a session
+# triggers this by hand via the Actions API.
+#
+# The pull_request trigger below does no work (see the event_name guard on
+# the job) -- it exists only so this file gets one real run and GitHub
+# registers it as dispatchable. Measured in Skyne-Quest (2026-09-13): a
+# workflow_dispatch-only file that has never run does not become
+# dispatchable through the API on its own, even once merged to main.
+
+name: delete-branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = log what would be deleted, delete nothing"
+        required: false
+        default: "false"
+  pull_request:
+    paths:
+      - '.github/workflows/delete-branch.yml'
+
+# Least privilege: nothing by default. The one job below asks for exactly
+# what deleting a ref needs, at job level, because a reusable-workflow call
+# takes its token from the calling job.
+permissions: {}
+
+# Two runs on the same ref and event would do the same work, so the newer one
+# wins. Keyed by event as well, so the one-time pull_request run can never
+# cancel a real dispatch.
+concurrency:
+  group: delete-branch-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: Gmor45/skyne/.github/workflows/branch-cleanup.yml@main
+    with:
+      dry_run: ${{ inputs.dry_run || 'false' }}
