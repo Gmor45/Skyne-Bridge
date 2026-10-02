@@ -30,9 +30,11 @@ the private `Gmor45/Skyne` repo at `.claude/skills/handoff/SKILL.md`.
    That file governs the pre-handoff gate, the footprint sweep, the chat
    grading passes, the pickup-tracking tag, the report format, and the
    branch → PR → **merge** sequence. **Merging is part of running the skill,
-   not a permission to ask for** — `allow_auto_merge` is `false` on that repo,
-   so nothing lands your PR for you, and a handoff sitting in an open PR is a
-   handoff the next session cannot read.
+   not a permission to ask for** — call `enable_pr_auto_merge` when you open
+   the PR (auto-merge is on for that repo; this line said `false` until
+   2026-10-02, which was wrong by 2026-09-14), merge by hand only if that call
+   errors, and remember a handoff sitting in an open PR is a handoff the next
+   session cannot read.
 
 3. **The repo file wins on any disagreement**, for the rest of the session.
 

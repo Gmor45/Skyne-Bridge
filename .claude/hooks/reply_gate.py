@@ -461,6 +461,35 @@ def pr_close_missing_backlog_count(text, tools):
                 and _NAMES_CONFLICT_COUNT.search(text or ""))
 
 
+# House-rules 1b, "And SET auto-merge when you open the PR (ruled
+# 2026-09-13)": a session that opens a PR calls enable_pr_auto_merge on it,
+# and if the repo refuses, says so in one line. Ruled after Garrett named the
+# miss three times in one night, and missed again the next day -- Skyne#497
+# and Skyne#506 were opened and never had auto-merge set or the omission
+# disclosed (Skyne 2026-09-14-correction-allow-auto-merge-is-true-not-false).
+# Nothing enforced it: the rule was loaded and the call was simply skipped.
+#
+# Same shape and same limit as rule 1e above: a hook cannot ask GitHub
+# whether auto-merge is really on, so it checks that the turn either MADE the
+# call or SAID why not. It sees MCP tool names only -- a PR opened with
+# `gh pr create` in Bash is invisible to it, and that hole is left open
+# rather than guessed at from command strings.
+AUTO_MERGE_TOOL = "mcp__github__enable_pr_auto_merge"
+_SAYS_NO_AUTO_MERGE = re.compile(
+    r"auto[-_ ]?merge\b[^\n]*\b(?:off|refused|not enabled|skipped)\b", re.I)
+
+
+def pr_opened_without_auto_merge(text, tools):
+    """True when this turn opened a PR, never called enable_pr_auto_merge,
+    and the reply never says auto-merge is off / refused / not enabled /
+    skipped. A merge-only turn, or a turn with no PR tool, never fires."""
+    if not tools or "mcp__github__create_pull_request" not in tools:
+        return False
+    if AUTO_MERGE_TOOL in tools:
+        return False
+    return not _SAYS_NO_AUTO_MERGE.search(text or "")
+
+
 # House-rules 1d: merging past a red check is ALLOWED, but only with a named
 # four-part disclosure -- what was red, why it is unrelated, what proves that,
 # what would change the answer. "The merge commit is NOT sufficient... a
@@ -1257,6 +1286,18 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "'4 open PRs in this repo, 1 conflicting'"
         )
 
+    # house-rules 1b: a PR opened this turn and auto-merge was neither set
+    # nor disclosed. See pr_opened_without_auto_merge().
+    if pr_opened_without_auto_merge(text, tools):
+        problems.append(
+            "this turn opened a PR and never called enable_pr_auto_merge on "
+            "it, and the reply never says why not. House-rules 1b (ruled "
+            "2026-09-13): set auto-merge when you open the PR, so a green PR "
+            "merges itself instead of waiting on a click Garrett does not "
+            "make. Call enable_pr_auto_merge now, or if the repo refuses it, "
+            "say so in one line, e.g. 'auto-merge refused: the repo has it off'"
+        )
+
     # AI-isms: whole reply, not just the block. Reported alongside whatever
     # else is wrong rather than short-circuiting — a reply can be both
     # stock-phrased and missing a section, and hearing one at a time wastes a
@@ -1726,8 +1767,26 @@ def self_test():
               {"mcp__github__merge_pull_request"}, False)
     _said_it = GOOD + "\n4 open PRs in this repo, 1 conflicting.\n"
     expect_t("PR opened, backlog named -> passes", _said_it,
-              {"mcp__github__create_pull_request"}, True)
+              {"mcp__github__create_pull_request", AUTO_MERGE_TOOL}, True)
     expect_t("no PR tool this turn -> untouched", GOOD, {"Read"}, True)
+
+    # house-rules 1b: opening a PR owes enable_pr_auto_merge or a one-line
+    # reason. The first case is the planted presence (6c) -- a PR opened with
+    # neither, which is exactly Skyne#497 and #506 -- so "passes" below can
+    # never mean the check went blind.
+    _opened = {"mcp__github__create_pull_request"}
+    expect_t("PR opened, no auto-merge, silent -> fails", _said_it,
+              _opened, False)
+    if not any("enable_pr_auto_merge" in c
+               for c in evaluate(_said_it, _opened)):
+        fails.append("rule 1b: the complaint must name enable_pr_auto_merge")
+    expect_t("PR opened + enable_pr_auto_merge -> passes", _said_it,
+              _opened | {AUTO_MERGE_TOOL}, True)
+    expect_t("PR opened, auto-merge refusal said -> passes", _said_it +
+              "Auto-merge refused: allow_auto_merge is off on this repo.\n",
+              _opened, True)
+    expect_t("merge-only turn -> no auto-merge ask", _said_it,
+              {"mcp__github__merge_pull_request"}, True)
     # ECHO_REPLY is the REAL 150-word reply, kept verbatim as a historical
     # record, so it predates the About line and now fails on that too. The two
     # assertions below were written to prove the ECHO check is what catches it
