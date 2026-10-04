@@ -644,14 +644,15 @@ def permission_wall_no_local_offer(text):
     return not NAMES_LOCAL_ALTERNATIVE.search(t)
 
 
-# House-rules 32: seven speaker labels (Wistin, Ward, Weir, Wander, Warden,
-# Whittle, Claude), and "Claude:" is not an eighth persona -- it names the
+# House-rules 32: eight speaker labels since 2026-10-03 (Wistin, Ward, Weir,
+# Wander, Warden, Whittle, Wick, Claude) -- Wick, who SHOWS, joined that day
+# ("Yeah let's make it"). "Claude:" is not a persona -- it names the
 # absence of one, which is why EVERY substantive reply carries one of the
-# seven, not only the six persona-shaped ones. Checked as a leading label on
+# eight, not only the seven persona-shaped ones. Checked as a leading label on
 # the first non-blank line, matching how the labels are actually written in
 # practice (their own worked examples in house-rules 32 open a line with
 # "Wander:" etc).
-SPEAKER_LABELS = ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Claude")
+SPEAKER_LABELS = ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Wick", "Claude")
 # Markdown bold can wrap either side of the colon ("**Claude:**" or
 # "**Claude**:"), or be absent entirely ("Claude:") -- strip asterisks before
 # matching rather than trying to enumerate every wrapping.
@@ -659,7 +660,7 @@ SPEAKER_LABEL_RX = re.compile(r"^\s*(%s):\s" % "|".join(SPEAKER_LABELS))
 
 
 def has_speaker_label(text):
-    """True when the reply opens with one of the seven house-rules 32 labels."""
+    """True when the reply opens with one of house-rules 32's labels."""
     t = (text or "").lstrip().replace("*", "")
     # only the first ~120 chars count as "opens with" -- a label appearing
     # deep in the body is not the reply identifying its own speaker.
@@ -1258,10 +1259,10 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
         stock_text is not None and has_speaker_label(stock_text))
     if not labelled:
         problems.append(
-            "this reply carries none of house-rules 32's seven speaker "
-            "labels (Wistin/Ward/Weir/Wander/Warden/Whittle/Claude:). Open "
-            "with whichever matches the work -- Claude: names the absence "
-            "of a persona, it is not an eighth thing to skip"
+            "this reply carries none of house-rules 32's eight speaker "
+            "labels (Wistin/Ward/Weir/Wander/Warden/Whittle/Wick/Claude:). "
+            "Open with whichever matches the work -- Claude: names the "
+            "absence of a persona, it is not a thing to skip"
         )
 
     spent = tier_call_on_a_spent_turn(text, tools)
@@ -2523,11 +2524,13 @@ def self_test():
     if not ok:
         fails.append('PLANTED case: an unrelated transcript must report chain_run False')
 
-    # ---- house-rules 32: seven speaker labels -------------------------------
+    # ---- house-rules 32: eight speaker labels -------------------------------
     expect("32: no label at all fires", "Just an ordinary reply. " + GOOD, False)
-    for lbl in ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Claude"):
+    for lbl in SPEAKER_LABELS:
         expect("32: %s: opens cleanly" % lbl,
                "%s: " % lbl + "Doing that persona's work. " + GOOD, True)
+    expect("32: Wick: opens cleanly (the seventh member, 2026-10-03)",
+           "Wick: Drawing it so it can be seen. " + GOOD, True)
     expect("32: a bold **Claude:** opener also passes",
            "**Claude:** Doing the work. " + GOOD, True)
     expect("32: a label mid-body does NOT count as opening with it",
