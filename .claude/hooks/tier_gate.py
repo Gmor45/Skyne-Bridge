@@ -170,14 +170,20 @@ SYSTEM = (
     "much work answering takes: small = one quick reply, medium = several steps "
     "or files, large = a long multi-step build. When torn between two tiers "
     "pick the HIGHER one. ALSO name the bucket the job belongs to, w: "
-    "wistin = make the thing a product is for (draft content, a new feature or "
-    "page); ward = organise and keep existing data/structure tidy (file, "
+    "wistin = make something new (code, a script, a feature, a page, a pin, "
+    "a task, instructions, content); ward = organise and keep existing data/structure tidy (file, "
     "re-link, fix metadata); weir = an open decision to tee up with options "
     "and a pick; wander = look past the ask (a better tool, an existing "
     "connector or skill, a cheaper way, research); warden = run or build a "
     "check, audit, gate, verify, fix a failing test; whittle = decide what to "
     "retire or delete; wick = draw, chart, lay out, visualise; none = a "
-    "question, chat, status or anything else. Reply with ONE line of JSON only: "
+    "question, chat, status or anything else. Judge by the THING asked for, not "
+    "the verb: a dashboard, chart, diagram, board or layout is wick even when "
+    "the verb is make or build; researching, searching or asking what tools, "
+    "connectors or options already exist is wander; weighing tradeoffs or "
+    "being unable to decide is weir; archiving or finding what nothing uses "
+    "any more is whittle; a new pin, task, script or instructions is wistin. "
+    "Reply with ONE line of JSON only: "
     '{"model":"haiku|sonnet|opus","effort":"low|medium|high",'
     '"size":"small|medium|large",'
     '"w":"wistin|ward|weir|wander|warden|whittle|wick|none","why":"<=12 words"}'
