@@ -118,6 +118,10 @@ import date_claims  # house-rules 40: catches a relative-time word next to a
                      # uses for the same reason -- see date_claims.py's own
                      # docstring for why two copies exist and how they stay
                      # provably in sync with skyne/scripts/check_date_claims.py.
+import ran_it  # house-rules 0, made countable 2026-10-05: a "works / fixed /
+               # passes" claim about code changed this turn with nothing run
+               # after the change. See ran_it.py for what it deliberately
+               # does not check.
 
 # ---------------------------------------------------------------- constants
 
@@ -1060,7 +1064,7 @@ def design_opted_out(text):
 
 def evaluate(text, tools=None, require_block=True, handoff_done=True,
              stock_text=None, wrapup_count=1, companion_done=True,
-             drew=None, design_done=True, chain_done=True):
+             drew=None, design_done=True, chain_done=True, unran=None):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
@@ -1083,6 +1087,8 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     (see design_checked). Both default to the non-firing values.
     `chain_done` is house-rules 10a's chain.py gate (see chain_run) — defaults
     to True so a caller that cannot say never triggers a false refusal.
+    `unran` is ran_it.check()'s finding for this turn, or None — computed by
+    the caller from the turn's tool calls, defaulting to the non-firing value.
     """
     # CORRECTED 2026-09-23: checks that look for a BAD PHRASE read the newest
     # block when the caller passes it. The joined turn still holds any draft
@@ -1118,6 +1124,12 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "wide screen, crimson as a fill not text, ground saturation, the "
             "radius scale — never taste".format(drew)
         )
+
+    # house-rules 0: "never say something works unless you ran it." Before
+    # the triviality exit for the same reason as the design gate above: "Fixed,
+    # works now." is four words and the most common shape of the claim.
+    if unran:
+        problems.append(ran_it.message(unran))
 
     if is_trivial(text):
         return problems  # short answer, nothing to skim past
@@ -2392,6 +2404,22 @@ def self_test():
     if not ok:
         fails.append("lifting the gate must not cost the triviality exit its job")
 
+    # house-rules 0, wired: the four-word claim is the commonest shape, so it
+    # must survive the triviality exit exactly like the design gate above.
+    _f = ran_it.check([("Edit", {"file_path": "/r/x.py"})], "Fixed, works now.")
+    _p = evaluate("Fixed, works now.", {"Edit"}, unran=_f)
+    ok = any("nothing ran" in x for x in _p)
+    print("  %-58s %s" % ("ran-it: a SHORT works-claim is still refused", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the triviality exit swallowed the ran-it complaint")
+    _f = ran_it.check([("Edit", {"file_path": "/r/x.py"}),
+                       ("Bash", {"command": "python3 x.py --self-test"})], "Fixed, works now.")
+    _p = evaluate("Fixed, works now.", {"Edit", "Bash"}, unran=_f)
+    ok = _f is None and _p == []
+    print("  %-58s %s" % ("ran-it: running it after the edit clears it", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a turn that ran the code must not be refused for claiming it works")
+
     # Fails SAFE: an unreadable transcript never traps a session.
     ok = drew_a_surface(None, 0) is None and design_checked(None, 0) is True
     print("  %-58s %s" % ("design: unreadable input fails safe", "ok" if ok else "FAIL"))
@@ -2591,7 +2619,9 @@ def run():
                             companion_done=companion_gated(entries),
                             drew=drew_a_surface(entries, b),
                             design_done=design_checked(entries, b),
-                            chain_done=chain_run(entries))
+                            chain_done=chain_run(entries),
+                            unran=ran_it.check(list(_tool_calls(entries, b)),
+                                               latest_prose(entries, b) or text))
         print("reply words: %d" % words(text))
         print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
         print("wrap-ups this turn: %d" % wrapups)
@@ -2636,7 +2666,9 @@ def run():
                         companion_done=companion_gated(entries),
                         drew=drew_a_surface(entries, boundary),
                         design_done=design_checked(entries, boundary),
-                        chain_done=chain_run(entries))
+                        chain_done=chain_run(entries),
+                        unran=ran_it.check(list(_tool_calls(entries, boundary)),
+                                           latest_prose(entries, boundary) or text))
     if not problems:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
