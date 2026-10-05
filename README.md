@@ -178,6 +178,21 @@ skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
   (a subagent re-reads its context, so it costs more than it saves), and a
   blocked message is never routed. A hook cannot start an agent, so this
   names it and the session sends it.
+- **Weir's event trigger** — `weir_gate.py` on `Stop`. A reply that ends on a
+  question to Garrett, lays out alternatives, and never says which it would
+  pick is refused once (house-rules 10: he wants the call made). It never
+  makes the choice; it asks for Weir's shape: question, options with costs,
+  a pick. It cannot trap a session (it allows on the platform's own re-entry
+  flag) and fails open.
+- **The router's exam** — `route_eval.py` + `route-corpus.json`: 41 messages
+  Garrett could send, 8 of them traps (one W's keyword inside another W's job:
+  "make sure the night shift ran", "check out this villain idea"), sent through
+  the real grader. Measured 2026-10-05: 35 of 41 before the grader prompt was
+  told to judge by the thing asked for rather than the verb; 40 of 41 after,
+  and 10 of 10 on prompts it was never tuned on. The one miss: "find registers
+  nothing reads anymore" goes to Warden, not Whittle. Run it after any change
+  to the grader prompt. The self-test (corpus shape, scoring) runs in CI;
+  the live exam costs about $0.003 a prompt and runs by hand.
 - **The record** — `w_ran.py` on `SubagentStart`/`SubagentStop` logs every
   agent that actually ran to `~/.claude/skyne/w-runs.jsonl`, joined to the
   router's row on `prompt_id`. Skyne's `scripts/w_triggers.py --logs` turns
