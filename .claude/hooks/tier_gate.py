@@ -40,6 +40,18 @@ WHAT IT DOES, EVERY MESSAGE
    message is SAVED: after `/model`, typing `go` sends it through. Saying
    `stay on <model>` overrides -- no argument, no second ask (rule 2a,
    2026-09-09) -- and the override holds until the recommendation changes.
+4b. ADDED 2026-10-05 -- THE W ROUTER. Garrett, the same day the seven W's
+   became agents: *"whenever I want Skyne to do something, it fires up the
+   corresponding agent, the agent does the thing, and then I'm done. The Ws
+   are the buckets that all skyne falls into."* The SAME Haiku call now also
+   names the bucket (`w`: one of the seven, or `none`). When the message is
+   let through and the job is `medium` or `large`, the hook adds one line of
+   context telling the session which agent the job belongs to. A `small` job
+   is never routed: a subagent re-reads its context, so routing a one-line
+   answer costs more than it saves (charter article 14). A hook cannot START
+   an agent (no hook or MCP primitive can), so this NAMES the agent and the
+   session sends it -- and `w_ran.py` records whether it did, joined on
+   `prompt_id`, which is how the Loop can see a router nobody obeys.
 5. Logs one row per message to `~/.claude/skyne/tier-gate.jsonl`: what ran,
    what was recommended, who graded it, how long it took, what it cost, and
    what happened. `skyne/scripts/tier_gate_report.py` turns that into the
@@ -157,10 +169,29 @@ SYSTEM = (
     "Effort: low = trivial, medium = normal, high = hard reasoning. Size = how "
     "much work answering takes: small = one quick reply, medium = several steps "
     "or files, large = a long multi-step build. When torn between two tiers "
-    "pick the HIGHER one. Reply with ONE line of JSON only: "
+    "pick the HIGHER one. ALSO name the bucket the job belongs to, w: "
+    "wistin = make the thing a product is for (draft content, a new feature or "
+    "page); ward = organise and keep existing data/structure tidy (file, "
+    "re-link, fix metadata); weir = an open decision to tee up with options "
+    "and a pick; wander = look past the ask (a better tool, an existing "
+    "connector or skill, a cheaper way, research); warden = run or build a "
+    "check, audit, gate, verify, fix a failing test; whittle = decide what to "
+    "retire or delete; wick = draw, chart, lay out, visualise; none = a "
+    "question, chat, status or anything else. Reply with ONE line of JSON only: "
     '{"model":"haiku|sonnet|opus","effort":"low|medium|high",'
-    '"size":"small|medium|large","why":"<=12 words"}'
+    '"size":"small|medium|large",'
+    '"w":"wistin|ward|weir|wander|warden|whittle|wick|none","why":"<=12 words"}'
 )
+
+# The seven Skyne Family members, in the card's order. Each is an agent in
+# .claude/agents/<id>.md; ci.yml checks this tuple against SPEAKER_LABELS.
+W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick")
+W_VERBS = {"wistin": "makes", "ward": "keeps", "weir": "tees up a decision",
+           "wander": "looks past the ask", "warden": "checks",
+           "whittle": "decides what to retire", "wick": "shows"}
+ROUTE_SIZES = ("medium", "large")
+# The router speaks only when the message was let through to do work.
+ROUTE_ACTIONS = ("allow", "allow-small", "resume", "override", "override-held", "released")
 
 
 # --------------------------------------------------------------------------
@@ -221,7 +252,10 @@ def parse_grade(raw: str) -> dict | None:
     size = str(d.get("size", "")).lower().strip()
     if size not in ("small", "medium", "large"):
         size = "medium"   # unstated -> assume it could pay off, as before sizes existed
-    return {"model": model, "effort": effort, "size": size,
+    w = str(d.get("w", "")).lower().strip()
+    if w not in W_AGENTS:
+        w = "none"        # unstated or invented -> never route on a guess
+    return {"model": model, "effort": effort, "size": size, "w": w,
             "why": str(d.get("why", ""))[:120]}
 
 
@@ -435,11 +469,12 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
         row["grader_error"] = grade["error"]
     rec_model, rec_effort = grade.get("model"), grade.get("effort")
     size = grade.get("size") or "medium"
+    w = grade.get("w") if grade.get("w") in W_AGENTS else "none"
     row.update({"rec_model": rec_model, "rec_effort": rec_effort,
-                "size": size, "why": grade.get("why")})
+                "size": size, "w": w, "why": grade.get("why")})
     if rec_model:
         state["last_grade"] = {"model": rec_model, "effort": rec_effort,
-                               "size": size, "why": grade.get("why")}
+                               "size": size, "w": w, "why": grade.get("why")}
 
     verdict = compare(cur_model, cur_effort, rec_model, rec_effort) if rec_model else "unjudged"
     row["verdict"] = verdict
@@ -520,6 +555,33 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
     return row, state, {"decision": "block", "reason": call}
 
 
+def route_line(row: dict) -> str | None:
+    """The W router's one line, or None. Never on a block, never on a small job."""
+    w = row.get("w")
+    if w not in W_AGENTS or row.get("action") not in ROUTE_ACTIONS:
+        return None
+    if row.get("size") not in ROUTE_SIZES:
+        return None
+    return ("[skyne-route] This is " + w.capitalize() + " work (" + W_VERBS[w] + "). "
+            "Hand the job to the `" + w + "` agent (Agent tool, subagent_type `" + w
+            + "`, or `load-house-rules:" + w + "` where it is plugin-scoped) and relay "
+            "what it returns, labelled `" + w.capitalize() + ":`. If the main session "
+            "should do it itself, say why in one line. Haiku's call, not a ruling: "
+            + str(row.get("why") or "no reason given"))
+
+
+def add_route(out: dict | None, row: dict) -> dict | None:
+    line = route_line(row)
+    row["routed"] = line is not None
+    if not line:         # a block's action is not in ROUTE_ACTIONS, so it never gets here
+        return out
+    if out and "hookSpecificOutput" in out:
+        hso = dict(out["hookSpecificOutput"])
+        hso["additionalContext"] = (hso.get("additionalContext", "") + "\n" + line).strip()
+        return {"hookSpecificOutput": hso}
+    return _context(line)
+
+
 def _context(text: str) -> dict:
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
                                    "additionalContext": text}}
@@ -564,12 +626,14 @@ def run(payload: dict) -> dict | None:
     state = load_state(session)
     t0 = time.monotonic()
     fields, state, out = decide(prompt, cur_model, cur_effort, state, grader, mode)
+    out = add_route(out, fields)
     state["turn"] = int(state.get("turn", 0)) + 1
     save_state(session, state)
     remote = os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or ""
     if remote.startswith("cse_"):
         remote = "session_" + remote[4:]   # the id the session index and misses use
     append_log(dict(fields, utc=now_utc(), session_id=session, turn=state["turn"],
+                    prompt_id=payload.get("prompt_id"),
                     remote_session_id=remote or None,
                     mode=mode, model=cur_model, effort=cur_effort,
                     model_source=msrc, effort_seen=bool(cur_effort),
@@ -582,8 +646,10 @@ def run(payload: dict) -> dict | None:
 
 def self_test() -> int:
     fails: list[str] = []
+    ran: list[str] = []
 
     def check(ok, label):
+        ran.append(label)
         if not ok:
             fails.append(label)
 
@@ -741,7 +807,43 @@ def self_test() -> int:
                         capture_output=True, text=True)
     check(cp.returncode == 0 and not cp.stdout.strip(), "garbage stdin exits 0 and prints nothing")
 
-    total = 46
+    # ---- the W router (2026-10-05): names the agent, never on a block or a small job
+    check(parse_grade('{"model":"sonnet","effort":"medium","size":"large","w":"warden"}')["w"] == "warden",
+          "a named bucket parses")
+    check(parse_grade('{"model":"sonnet","effort":"medium","w":"gremlin"}')["w"] == "none",
+          "an invented bucket is never routed on")
+    check(parse_grade('{"model":"sonnet","effort":"medium"}')["w"] == "none", "an unstated bucket is none")
+
+    def wfix(w, size="medium", model="sonnet", effort="medium"):
+        return lambda t: {"model": model, "effort": effort, "size": size, "w": w,
+                          "why": "fixture", "grader": "haiku"}
+    msg = "please audit every promise in the repo and fix the ones that fail today"
+    r, s_, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("warden"))
+    o = add_route(o, r)
+    ctx = (o or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+    check(r.get("routed") is True and "`warden` agent" in ctx and "Warden:" in ctx,
+          "a matched medium Warden job is routed to the warden agent")
+    check(s_.get("last_grade", {}).get("w") == "warden", "the bucket is remembered for a bare 'go'")
+    r, _, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("warden", size="small"))
+    check(add_route(o, r) is None and r["routed"] is False, "a small job is never routed (a subagent costs more)")
+    r, _, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("none"))
+    check(add_route(o, r) is None and r["routed"] is False, "bucket none is never routed")
+    r, _, o = decide(msg, "claude-opus-5-5", "high", {}, wfix("wick", model="haiku", effort="low"))
+    o2 = add_route(o, r)
+    check(o2 and o2.get("decision") == "block" and "skyne-route" not in json.dumps(o2) and r["routed"] is False,
+          "a blocked message is never routed -- the tier call speaks alone")
+    held = {"pending": {"prompt": "rename the files", "grade": {"model": "sonnet", "effort": "medium", "why": "x"},
+                        "blocks": 1}, "last_grade": {"model": "sonnet", "effort": "medium", "size": "large",
+                                                     "w": "ward", "why": "x"}}
+    r, _, o = decide("go", "claude-sonnet-5", "medium", held, wfix("ward"))
+    o = add_route(o, r)
+    ctx = o["hookSpecificOutput"]["additionalContext"]
+    check("rename the files" in ctx and "`ward` agent" in ctx,
+          "a resumed message keeps its held text AND gains the route line")
+    for w in W_AGENTS:
+        check(w in W_VERBS, f"{w} has a verb for the route line")
+
+    total = len(ran)   # counted, not typed: a typed 46 hid every check added after it
     if fails:
         for f in fails:
             print("SELF-TEST FAIL:", f)

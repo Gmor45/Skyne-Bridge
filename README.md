@@ -167,6 +167,23 @@ ever stops matching `reply_gate.py`'s `SPEAKER_LABELS`, which Skyne's
 `check_family_copies.py` already ties to the family card — so adding an eighth
 member breaks a build here until the agent exists.
 
+**And they have a trigger now — added 2026-10-05.** Garrett, the same day:
+*"whenever I want Skyne to do something, it fires up the corresponding agent,
+the agent does the thing, and then I'm done. The Ws are the buckets that all
+skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
+
+- **The router** — `tier_gate.py`'s one Haiku call per message now also names
+  the bucket. When the job is medium or large and the message is let through,
+  the session is told which agent it belongs to. Small jobs are never routed
+  (a subagent re-reads its context, so it costs more than it saves), and a
+  blocked message is never routed. A hook cannot start an agent, so this
+  names it and the session sends it.
+- **The record** — `w_ran.py` on `SubagentStart`/`SubagentStop` logs every
+  agent that actually ran to `~/.claude/skyne/w-runs.jsonl`, joined to the
+  router's row on `prompt_id`. Skyne's `scripts/w_triggers.py --logs` turns
+  the two logs into routed / ran / ignored per W — the number the Loop uses
+  to make the buckets better.
+
 **RETIRED 2026-09-23 — read this before the paragraph below it.**
 `delegate_reminder.py` is now a silent tombstone and is unregistered. Its job
 moved into **`.claude/hooks/tier_gate.py`**, which grades EVERY message with
