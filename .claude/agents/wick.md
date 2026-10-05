@@ -44,10 +44,13 @@ meta layer. Should understand audience."*
 - **Engines, and when to skip them.** Anything that moves or can be dragged
   uses the estate's one graph engine (`Gartera-Vault/scripts/assets/gartera-graph.js`,
   vendored in `Skyne-Gauge/vendor/gartera-graph/`) and one canvas
-  (`Skyne-Gauge/vendor/gridlayout/`). A one-off static diagram may be plain
-  inline SVG. For a concept drawing with no data feed, "the same code path"
-  means: generate it from the card and the registers, never type a name,
-  number or hex by hand.
+  (`Skyne-Gauge/vendor/gridlayout/`). **Every page is an arrangeable canvas,
+  static diagrams included** (vault Dashboard Design Philosophy rule 11):
+  the blocks are cards on gridlayout, wired the way `companion.py new` wires
+  them, and `python3 Skyne/scripts/check_design.py <page>` must show 0 FAIL
+  before anything is published. For a concept drawing with no data feed,
+  "the same code path" means: generate it from the card and the registers,
+  never type a name, number or hex by hand.
 
 ## Before you start: read the live card, not this file
 
