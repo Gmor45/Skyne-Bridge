@@ -73,8 +73,15 @@ jobs:
               cmds = [x.get("command", "") for g in h.get(ev, []) for x in g.get("hooks", [])]
               if not any("w_ran.py" in c for c in cmds):
                   print(f"w_ran.py is not registered on {ev}"); sys.exit(1)
-          print("w_ran.py registered on both events")
+          stop = [x.get("command", "") for g in h.get("Stop", []) for x in g.get("hooks", [])]
+          if not any("weir_gate.py" in c for c in stop):
+              print("weir_gate.py is not registered on Stop"); sys.exit(1)
+          print("w_ran.py registered on both events; weir_gate.py on Stop")
           PY
+      - name: Weir gate self-test (a menu with no pick)
+        run: python3 .claude/hooks/weir_gate.py --self-test
+      - name: W router exam corpus and scoring (no model)
+        run: python3 .claude/hooks/route_eval.py --self-test
       - name: Turn counter self-test
         run: python3 .claude/hooks/turn_counter.py --self-test
       - name: Delegate reminder tombstone stays silent (retired 2026-09-23)
