@@ -50,12 +50,30 @@ jobs:
               m = re.search(r"^name:\s*(\S+)", f.read_text(), re.M)
               agents[f.stem] = m.group(1) if m else None
           family = {k for k in agents if k in members}
+          import tier_gate, w_ran
+          for name, tup in (("tier_gate.W_AGENTS", tier_gate.W_AGENTS), ("w_ran.W_AGENTS", w_ran.W_AGENTS)):
+              if set(tup) != members:
+                  print(f"{name} does not match the family: {sorted(tup)} vs {sorted(members)}")
+                  sys.exit(1)
           bad = [k for k, v in agents.items() if v != k]
           missing = sorted(members - family)
           print(f"{len(members)} family members, {len(family)} have an agent")
           if missing or bad or len(members) != 7:
               print("missing agent(s):", missing, "| name != filename:", bad, "| members:", sorted(members))
               sys.exit(1)
+          PY
+      - name: W-ran recorder self-test (which Skyne Family agent actually ran)
+        run: python3 .claude/hooks/w_ran.py --self-test
+      - name: The W-ran recorder is REGISTERED on SubagentStart and SubagentStop
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          h = json.load(open(".claude/hooks/hooks.json"))["hooks"]
+          for ev in ("SubagentStart", "SubagentStop"):
+              cmds = [x.get("command", "") for g in h.get(ev, []) for x in g.get("hooks", [])]
+              if not any("w_ran.py" in c for c in cmds):
+                  print(f"w_ran.py is not registered on {ev}"); sys.exit(1)
+          print("w_ran.py registered on both events")
           PY
       - name: Turn counter self-test
         run: python3 .claude/hooks/turn_counter.py --self-test
