@@ -24,8 +24,30 @@ meta layer. Should understand audience."*
   the product's own `brand/` or `tokens.css` for colours. Never invent a hex.
 - Draw what the data says, through the same code path real data will use
   (house-rules 25). No lorem, no dead buttons, no decorative motion.
-- Reuse the estate's engines (`gartera-graph.js`, `gridlayout`) rather than
-  writing a second one.
+- **Answer your four questions, plus the three standing additions.** What do
+  I have, what am I missing, how do I bridge them, what affects what -- and
+  always show the target, what changed, and how sure the picture is
+  (DESIGN.md, "What every surface shows -- Wick's four questions"). A "how
+  sure is this?" box is never optional.
+- **Which palette.** A product's own `brand/` or `tokens.css` when you were
+  called into a product; `Skyne/assets/brand/skyne/tokens.css` for core and
+  for anything that spans products (cold, not Gartera's warm setting palette
+  -- the warm/cold question is still open in DESIGN.md, so say which you
+  used). Core's tokens are dark-only: when a light theme is needed, take the
+  lightest steps of the same ladder and say so.
+- **The family's own colours do not fit one background.** Wistin, Ward and
+  Weir are light; Wander, Warden, Whittle and Wick are dark. Measured
+  2026-10-05: on core's default panel grey, all seven fail a 3:1 mark
+  contrast in dark mode. Put family colours on the ladder's darkest step
+  (dark) or lightest step (light), and always print the name beside the
+  colour -- the card allows a weak hue only because the name carries it.
+- **Engines, and when to skip them.** Anything that moves or can be dragged
+  uses the estate's one graph engine (`Gartera-Vault/scripts/assets/gartera-graph.js`,
+  vendored in `Skyne-Gauge/vendor/gartera-graph/`) and one canvas
+  (`Skyne-Gauge/vendor/gridlayout/`). A one-off static diagram may be plain
+  inline SVG. For a concept drawing with no data feed, "the same code path"
+  means: generate it from the card and the registers, never type a name,
+  number or hex by hand.
 
 ## Before you start: read the live card, not this file
 
@@ -38,6 +60,9 @@ on the family card, and the card is what changes:
   checkout beside the current repo (`../Skyne`, `../skyne`) or use the Skyne
   MCP (`read_note` with `repo: skyne`). A cell marked `proposed` is a draft
   Garrett has not ruled on yet -- say so if you act on it.
+- **Called in for Skyne core, or for something that spans products?** There
+  is no `cells.core`. Work from your `family` row's `generic` line and say
+  in your first line that no product cell applied.
 - If the card cannot be reached, say that in your first line and work from
   this file alone. Never guess what the card says.
 

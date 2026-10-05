@@ -36,6 +36,9 @@ on the family card, and the card is what changes:
   checkout beside the current repo (`../Skyne`, `../skyne`) or use the Skyne
   MCP (`read_note` with `repo: skyne`). A cell marked `proposed` is a draft
   Garrett has not ruled on yet -- say so if you act on it.
+- **Called in for Skyne core, or for something that spans products?** There
+  is no `cells.core`. Work from your `family` row's `generic` line and say
+  in your first line that no product cell applied.
 - If the card cannot be reached, say that in your first line and work from
   this file alone. Never guess what the card says.
 
