@@ -144,6 +144,29 @@ it was asked, report counts rather than impressions, stop and ask rather than
 guess at anything ambiguous, and never touch git — that stays with whichever
 session spawned it.
 
+**The Skyne Family as agents — added 2026-10-05.** Garrett, braindump
+10/05/26: *"I feel like the W's should be agents, not just personas"* and
+*"probably make an agent for each W."* So each of the seven is now a subagent
+in the same directory, scoped as `load-house-rules:<name>` once the plugin
+syncs:
+
+| agent | does | can write? |
+|---|---|---|
+| `wistin` | makes — drafts the thing a product is for | yes |
+| `ward` | keeps — organises data and structure | yes |
+| `weir` | chooses — tees up a decision with options and a pick, never decides | no |
+| `wander` | proposes — a better tool or way, past what was asked | no |
+| `warden` | checks — runs gates, builds checks, removes what Whittle decided | yes |
+| `whittle` | retires — decides what no longer earns its place, with evidence | no |
+| `wick` | shows — draws it, starting from who is looking | yes |
+
+Each file holds only the member's identity; what they do in a given product is
+read live from `Skyne/data/skyne-family.json` (house-rules 39 — a surface that
+syncs slowly holds a pointer, not a copy). CI fails if the set of agent files
+ever stops matching `reply_gate.py`'s `SPEAKER_LABELS`, which Skyne's
+`check_family_copies.py` already ties to the family card — so adding an eighth
+member breaks a build here until the agent exists.
+
 **RETIRED 2026-09-23 — read this before the paragraph below it.**
 `delegate_reminder.py` is now a silent tombstone and is unregistered. Its job
 moved into **`.claude/hooks/tier_gate.py`**, which grades EVERY message with
