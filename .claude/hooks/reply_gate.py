@@ -842,8 +842,43 @@ def wrapups_this_turn(entries, boundary):
     have scrolled past. A tool-only message has no text block and is skipped
     the same way tools_used() skips it.
     """
+    # CORRECTED 2026-10-06: count from the LAST stop-hook rejection, not from
+    # the start of the turn. Measured live, three times in one session: a
+    # reply ended with a wrap-up, this gate refused it for something else
+    # (a missing PR count), and its own instruction -- re-send the corrected
+    # part, ending in the wrap-up -- produced a second block. Counting the
+    # whole turn then refused THAT for carrying two, and a chat message cannot
+    # be deleted, so no reply could ever pass: it looped to the re-prompt cap
+    # and Garrett scrolled past three or four TLDRs. Garrett: "sometimes it
+    # runs but then another one runs after and I have like three or four recs
+    # and tldrs in a row. Never managed to get it to work." The rejected draft
+    # is history once the gate has spoken; only the attempt since then is the
+    # reply this gate can still change.
+    #
+    # What this must NOT lose is the 2026-09-11 case it was built for: a
+    # rejection followed by a FULL re-send, carrying the very same wrap-up
+    # again. So a wrap-up after the last rejection that is word-for-word one
+    # already sent earlier in the turn still counts as a second one. A
+    # CORRECTED wrap-up (different words) counts once and passes.
+    start = boundary
+    for i in range(boundary + 1, len(entries)):
+        if is_stop_feedback(entries[i]):
+            start = i
+    earlier = {_wrapup_tail(t) for t in _assistant_texts(entries, boundary, start)
+               if is_full_wrapup(t)}
     count = 0
-    for e in entries[boundary + 1:]:
+    for text in _assistant_texts(entries, start, len(entries)):
+        if is_full_wrapup(text):
+            count += 1
+            if _wrapup_tail(text) in earlier:
+                count += 1   # an identical re-send: Garrett sees it twice
+    return count
+
+
+def _assistant_texts(entries, lo, hi):
+    """Main-loop assistant message texts strictly after index lo, before hi."""
+    out = []
+    for e in entries[lo + 1:hi]:
         if e.get("type") != "assistant" or e.get("isSidechain"):
             continue
         content = (e.get("message") or {}).get("content")
@@ -852,9 +887,42 @@ def wrapups_this_turn(entries, boundary):
         blocks = [b.get("text") or "" for b in content
                   if isinstance(b, dict) and b.get("type") == "text"]
         text = "\n".join(blocks).strip()
-        if text and is_full_wrapup(text):
-            count += 1
-    return count
+        if text:
+            out.append(text)
+    return out
+
+
+def _wrapup_tail(text):
+    """The wrap-up part of a message, normalised, so an identical re-send
+    compares equal however the body above it changed."""
+    t = text or ""
+    for marker in ("**About**", "**What I did**"):
+        i = t.find(marker)
+        if i >= 0:
+            t = t[i:]
+            break
+    return " ".join(t.split()).lower()
+
+
+def any_wrapup_in_turn(entries, boundary):
+    """True when ANY message this turn already carries a full wrap-up, the
+    rejected drafts included. Used only to choose what the rejection asks
+    for -- never to count duplicates."""
+    return any(is_full_wrapup(t) for t in _assistant_texts(entries, boundary, len(entries)))
+
+
+def is_stop_feedback(e):
+    """True for the hidden user entry a Stop hook's rejection arrives as:
+    type user, isMeta, text starting 'Stop hook feedback'. Measured on a real
+    transcript, 2026-10-06: 11 such entries, every one isMeta and every one
+    opening with that phrase."""
+    if not isinstance(e, dict) or e.get("type") != "user" or not e.get("isMeta"):
+        return False
+    c = (e.get("message") or {}).get("content")
+    if isinstance(c, list):
+        c = " ".join(b.get("text") or "" for b in c
+                     if isinstance(b, dict) and b.get("type") == "text")
+    return isinstance(c, str) and c.lstrip().startswith("Stop hook feedback")
 
 
 def handoff_ran(entries):
@@ -1388,9 +1456,11 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "block), not one. House-rules 0a-i: it is ONE named thing and it "
             "belongs on the FINAL message of the turn, nowhere else — an "
             "earlier one was already stale by the time Garrett could read it. "
-            "Delete every wrap-up except the last, and if a Stop-hook "
-            "rejection sent you back, re-send only the corrected wrap-up, "
-            "never the whole reply" % wrapup_count
+            "Do not send it again: a wrap-up already sits above this, and "
+            "messages cannot be deleted, so every re-send is one more for "
+            "Garrett to scroll past. Send only the fix, as a short message "
+            "with NO wrap-up -- or, only if the wrap-up itself was what was "
+            "wrong, ONE corrected wrap-up in different words" % wrapup_count
         )
 
     if not require_block:
@@ -1502,7 +1572,29 @@ RESEND_RULE = (
 )
 
 
-def build_reason(problems, attempt, require_block=True):
+NO_SECOND_BLOCK = (
+    "\nA wrap-up is already in this turn above. Fix ONLY the items listed, in a "
+    "short message, and do NOT add another wrap-up -- the one above stands. "
+    "Each extra one is one more TLDR Garrett has to scroll past (2026-10-06)."
+)
+BLOCK_PROBLEM_RX = re.compile(
+    r"closing block|\bwrap-ups?\b|\*\*(?:About|What I did|Why|"
+    r"Recommendations|TLDR)\*\*|\b(?:About|TLDR|Recommendations) (?:section|line|heading)",
+    re.I)
+
+
+def build_reason(problems, attempt, require_block=True, block_sent=False):
+    # 2026-10-06: when a wrap-up is ALREADY in the turn and nothing listed is
+    # about it, asking for "the required shape at the very END" is what made
+    # every correction carry a second wrap-up. Say the opposite instead.
+    # The duplicate complaint names wrap-ups but asks for FEWER, so it must not
+    # count as a reason to print the shape -- that would ask for a third.
+    shape_problems = [p for p in problems if not (p or "").startswith("this turn carries ")]
+    if block_sent and not any(BLOCK_PROBLEM_RX.search(p) for p in shape_problems):
+        head = ("Do not end this turn yet -- one thing needs fixing first:"
+                if attempt <= 1 else "Still not right:")
+        return "%s\n%s%s%s" % (head, "\n".join("  - " + p for p in problems),
+                               NO_SECOND_BLOCK, RESEND_RULE)
     if not require_block:
         # Not a block-shape ask -- do not describe the four-part structure for
         # a problem that is only a stock phrase or an echo-only turn. Asking
@@ -2308,6 +2400,66 @@ def self_test():
         fails.append("a subagent's wrap-up never reaches Garrett and must not "
                      "be counted toward this turn's total")
 
+    # 2026-10-06: the retry trap. A rejection arrives as a hidden user entry;
+    # the counter must restart there, or no correction can ever pass.
+    _fb = {"type": "user", "isMeta": True, "message": {"content": [
+        {"type": "text", "text": "Stop hook feedback:\nthis turn opened a PR and ..."}]}}
+    _GOOD2 = GOOD + " Corrected after the gate."
+    # TODAY'S LOOP, replayed: wrap-up, rejected for something else, corrected
+    # wrap-up in different words. Old count 2 (refused forever); new count 1.
+    ok = wrapups_this_turn([_user_turn, _asst_msg(GOOD), _fb, _asst_msg(_GOOD2)], 0) == 1
+    print("  %-58s %s" % ("wrapups: a corrected wrap-up after a rejection is 1",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the rejected draft must not count once the gate has spoken "
+                     "-- this is the loop that stacked 3-4 TLDRs on 2026-10-05")
+    # PLANTED (6c): the 2026-09-11 case must still be caught -- the SAME
+    # wrap-up re-sent after a rejection is a duplicate Garrett sees twice.
+    ok = wrapups_this_turn([_user_turn, _asst_msg(GOOD), _fb, _asst_msg(GOOD)], 0) == 2
+    print("  %-58s %s" % ("wrapups: an IDENTICAL re-send after a rejection is 2",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("PLANTED: a word-for-word re-send of the wrap-up after a "
+                     "rejection must still count as a second one")
+    ok = wrapups_this_turn([_user_turn, _asst_msg(GOOD), _fb, _asst_msg(SAMPLE_BODY)], 0) == 0
+    print("  %-58s %s" % ("wrapups: a short fix with no wrap-up is 0",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a correction with no wrap-up must not be counted against itself")
+    _real_user = {"type": "user", "message": {"content": "Stop hook feedback is annoying"}}
+    ok = (not is_stop_feedback(_real_user)) and is_stop_feedback(_fb)
+    print("  %-58s %s" % ("is_stop_feedback: only the hidden rejection entry",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a message Garrett typed must never be read as a rejection")
+    # The rejection message: with a wrap-up already sent and a problem NOT
+    # about it, never ask for the shape at the end again (that ask was the
+    # other half of the trap). With a problem ABOUT the block, keep the shape.
+    _r1 = build_reason(["this turn opened or merged a PR and the reply never names "
+                        "this repo's open-PR count"], 1, True, block_sent=True)
+    ok = "Required shape" not in _r1 and "do NOT add another wrap-up" in _r1
+    print("  %-58s %s" % ("build_reason: no second wrap-up asked for",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("with a wrap-up already sent, a non-wrap-up problem must not "
+                     "ask for the shape at the very end again")
+    _r3 = build_reason(["this turn carries 2 wrap-ups (the About/What I did/Why/"
+                        ".../TLDR block), not one."], 2, True, block_sent=True)
+    ok = "Required shape" not in _r3
+    print("  %-58s %s" % ("build_reason: the duplicate complaint asks for no third",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the 'carries 2 wrap-ups' complaint must never append the "
+                     "shape footer -- that asks for a third wrap-up")
+    _r2 = build_reason(["closing block is missing its **TLDR** line"], 1, True,
+                       block_sent=True)
+    ok = "Required shape" in _r2
+    print("  %-58s %s" % ("build_reason: a block problem still gets the shape",
+                          "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("PLANTED: when the problem IS the wrap-up, the shape must "
+                     "still be described")
+
     # ---- the design gate: a turn that DRAWS owes the design check ----------
     # Garrett, 2026-09-13: "There should be a hook for that whenever you make
     # something I look at." Every case below carries both halves (rule 6c): the
@@ -2682,7 +2834,8 @@ def run():
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
         allow("cap_exhausted", count=n)
-    block(build_reason(problems, n, require_block))
+    block(build_reason(problems, n, require_block,
+                       block_sent=any_wrapup_in_turn(entries, boundary)))
 
 
 def main():
