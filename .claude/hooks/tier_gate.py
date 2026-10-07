@@ -44,7 +44,8 @@ WHAT IT DOES, EVERY MESSAGE
    became agents: *"whenever I want Skyne to do something, it fires up the
    corresponding agent, the agent does the thing, and then I'm done. The Ws
    are the buckets that all skyne falls into."* The SAME Haiku call now also
-   names the bucket (`w`: one of the seven, or `none`). When the message is
+   names the bucket (`w`: one of the family -- eight since Wren joined on
+   2026-10-07 -- or `none`). When the message is
    let through and the job is `medium` or `large`, the hook adds one line of
    context telling the session which agent the job belongs to. A `small` job
    is never routed: a subagent re-reads its context, so routing a one-line
@@ -176,7 +177,9 @@ SYSTEM = (
     "and a pick; wander = look past the ask (a better tool, an existing "
     "connector or skill, a cheaper way, research); warden = run or build a "
     "check, audit, gate, verify, fix a failing test; whittle = decide what to "
-    "retire or delete; wick = draw, chart, lay out, visualise; none = a "
+    "retire or delete; wick = draw, chart, lay out, visualise; wren = try "
+    "out something already built the way its user would, with no docs, and "
+    "report where it gets confusing or stuck (never fix it); none = a "
     "question, chat, status or anything else. Judge by the THING asked for, not "
     "the verb: a dashboard, chart, diagram, board or layout is wick even when "
     "the verb is make or build; researching, searching or asking what tools, "
@@ -186,15 +189,17 @@ SYSTEM = (
     "Reply with ONE line of JSON only: "
     '{"model":"haiku|sonnet|opus","effort":"low|medium|high",'
     '"size":"small|medium|large",'
-    '"w":"wistin|ward|weir|wander|warden|whittle|wick|none","why":"<=12 words"}'
+    '"w":"wistin|ward|weir|wander|warden|whittle|wick|wren|none","why":"<=12 words"}'
 )
 
-# The seven Skyne Family members, in the card's order. Each is an agent in
+# The Skyne Family members, in the card's order (eight since 2026-10-07, when
+# Wren joined). Each is an agent in
 # .claude/agents/<id>.md; ci.yml checks this tuple against SPEAKER_LABELS.
-W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick")
+W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren")
 W_VERBS = {"wistin": "makes", "ward": "keeps", "weir": "tees up a decision",
            "wander": "looks past the ask", "warden": "checks",
-           "whittle": "decides what to retire", "wick": "shows"}
+           "whittle": "decides what to retire", "wick": "shows",
+           "wren": "uses it the way Garrett would"}
 ROUTE_SIZES = ("medium", "large")
 # The router speaks only when the message was let through to do work.
 ROUTE_ACTIONS = ("allow", "allow-small", "resume", "override", "override-held", "released")
@@ -848,6 +853,11 @@ def self_test() -> int:
           "a resumed message keeps its held text AND gains the route line")
     for w in W_AGENTS:
         check(w in W_VERBS, f"{w} has a verb for the route line")
+        # A member the grader is never offered can never be routed to, and
+        # nothing else would notice: decide() maps an unknown bucket to none.
+        enum = (re.search(r'"w":"([a-z|]+)"', SYSTEM) or [None, ""])[1].split("|")
+        check(f"{w} = " in SYSTEM and w in enum,
+              f"{w} is offered to the grader, in the job list and the JSON enum")
 
     total = len(ran)   # counted, not typed: a typed 46 hid every check added after it
     if fails:

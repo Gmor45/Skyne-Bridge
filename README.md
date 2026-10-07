@@ -159,12 +159,13 @@ syncs:
 | `warden` | checks — runs gates, builds checks, removes what Whittle decided | yes |
 | `whittle` | retires — decides what no longer earns its place, with evidence | no |
 | `wick` | shows — draws it, starting from who is looking | yes |
+| `wren` | uses — tries it the way Garrett would, no docs, and reports where it got stuck (added 2026-10-07) | no |
 
 Each file holds only the member's identity; what they do in a given product is
 read live from `Skyne/data/skyne-family.json` (house-rules 39 — a surface that
 syncs slowly holds a pointer, not a copy). CI fails if the set of agent files
 ever stops matching `reply_gate.py`'s `SPEAKER_LABELS`, which Skyne's
-`check_family_copies.py` already ties to the family card — so adding an eighth
+`check_family_copies.py` already ties to the family card — so adding a new
 member breaks a build here until the agent exists.
 
 **And they have a trigger now — added 2026-10-05.** Garrett, the same day:
