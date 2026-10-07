@@ -58,7 +58,9 @@ jobs:
           bad = [k for k, v in agents.items() if v != k]
           missing = sorted(members - family)
           print(f"{len(members)} family members, {len(family)} have an agent")
-          if missing or bad or len(members) != 7:
+          # Eight since 2026-10-07 (Wren). Typed on purpose: a dropped member
+          # in BOTH SPEAKER_LABELS and the agents dir must still fail here.
+          if missing or bad or len(members) != 8:
               print("missing agent(s):", missing, "| name != filename:", bad, "| members:", sorted(members))
               sys.exit(1)
           PY

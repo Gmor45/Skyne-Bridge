@@ -25,7 +25,7 @@ WHAT IT RECORDS
     prompt_id, and on stop the length of the agent's last message (never its
     text -- the log is a count, not a copy).
 
-Every agent is logged, not only the seven, so "how often does work go to an
+Every agent is logged, not only the family, so "how often does work go to an
 agent that is NOT a W" is answerable too (Explore, haiku-mechanic, ...).
 
 NEVER GETS IN THE WAY
@@ -46,9 +46,10 @@ import os
 import sys
 import tempfile
 
-# The seven, in the family card's order (Skyne data/skyne-family.json).
+# The family, in the card's order (Skyne data/skyne-family.json) -- eight
+# since Wren joined on 2026-10-07.
 # ci.yml checks this tuple against reply_gate.SPEAKER_LABELS.
-W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick")
+W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren")
 
 
 def log_path() -> str:
@@ -112,7 +113,7 @@ def self_test() -> int:
     check(member("load-house-rules:wick") == "wick", "a plugin-scoped member is recognised")
     check(member("Weir") == "weir", "case does not matter")
     check(member("Explore") is None and member("haiku-mechanic") is None,
-          "an agent that is not one of the seven is not credited to a W")
+          "an agent that is not a family member is not credited to a W")
     check(member("") is None and member(None) is None, "no agent type is no member")
 
     start = row_for({"hook_event_name": "SubagentStart", "agent_type": "load-house-rules:warden",
