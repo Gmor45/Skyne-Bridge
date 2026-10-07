@@ -155,6 +155,17 @@ CONTINUE_RE = re.compile(
 OVERRIDE_RE = re.compile(
     r"\bstay on (haiku|sonnet|opus|fable)\b|\b(override tier|tier override)\b",
     re.IGNORECASE)
+# 2026-10-07, Garrett: "if agents run side queries it fires." Measured in
+# skyne/data/tier-gate-sessions.jsonl: 2.6x-7.25x more gate rows than messages
+# he actually typed. A finished background agent, a PR wake, a scheduled
+# check-in -- the harness delivers each as a prompt, and the gate graded (and
+# could BLOCK) every one. These are the same prefixes tier_gate_report.py
+# already refuses to count as typed, so the gate and its report now agree.
+MACHINE_PREFIXES = ("<task-notification", "<system-reminder", "[SYSTEM NOTIFICATION",
+                    "<wake", "<webhook-payload", "<child-session-event",
+                    "<teammate-message", "<local-command", "<command-name>",
+                    "<<autonomous-loop", "<scheduled", "[Artifact comment")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 SET_MODEL_RE = re.compile(r"[Ss]et model to\s+\**([A-Za-z][\w .\-\[\]]*)")
 SET_EFFORT_RE = re.compile(
     r"[Ee]ffort(?: level)?(?: set)? to\s+\**(low|medium|high|xhigh|max)\b")
@@ -209,7 +220,8 @@ W_VERBS = {"wistin": "makes", "ward": "keeps", "weir": "tees up a decision",
            "wren": "uses it the way Garrett would"}
 ROUTE_SIZES = ("medium", "large")
 # The router speaks only when the message was let through to do work.
-ROUTE_ACTIONS = ("allow", "allow-small", "resume", "override", "override-held", "released")
+ROUTE_ACTIONS = ("allow", "allow-small", "resume", "resume-unseen", "override",
+                 "override-held", "released")
 
 
 # --------------------------------------------------------------------------
@@ -302,17 +314,66 @@ def _text_of(row: dict) -> str:
     msg = row.get("message")
     content = msg.get("content") if isinstance(msg, dict) else row.get("content")
     if isinstance(content, str):
-        return content
+        return ANSI_RE.sub("", content)
     if isinstance(content, list):
-        return " ".join(c.get("text", "") for c in content
-                        if isinstance(c, dict) and isinstance(c.get("text"), str))
+        return ANSI_RE.sub("", " ".join(c.get("text", "") for c in content
+                                        if isinstance(c, dict) and isinstance(c.get("text"), str)))
     return ""
+
+
+def machine_prompt(payload: dict, text: str) -> bool:
+    """True when the harness, not Garrett, sent this prompt."""
+    origin = payload.get("origin")
+    kind = origin.get("kind") if isinstance(origin, dict) else origin
+    if kind and str(kind).lower() != "human":
+        return True
+    return (text or "").lstrip().startswith(MACHINE_PREFIXES)
+
+
+def _ts(value) -> _dt.datetime | None:
+    try:
+        return _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def switch_log_path() -> str:
+    return os.environ.get("SKYNE_MODEL_LOG") or os.path.join(skyne_dir(), "model-switches.jsonl")
+
+
+def latest_switch(session: str) -> tuple:
+    """(to_model, utc) of this session's newest LANDED switch, from model_switch.py's log.
+
+    2026-10-07, Garrett: "needs me to run it twice even if I switch." The gate
+    only knew the model from the transcript -- a `Set model to` line, or the
+    last reply's model. A switch made from the app's model picker writes no
+    such line, and no reply exists yet after a block, so `go` was graded
+    against the OLD model and held again. PostModelSwitch fires on every
+    landed switch, carrying `to_model`; model_switch.py already logs it.
+    """
+    if not session:
+        return None, None
+    found = (None, None)
+    try:
+        with open(switch_log_path(), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if (r.get("session_id") == session and r.get("to_model")
+                        and r.get("event") != "PreModelSwitch"):
+                    found = (r["to_model"], r.get("utc"))
+    except OSError:
+        pass
+    return found
 
 
 def live_model_effort(payload: dict, rows: list[dict]) -> tuple:
     """(model, effort, model_source, effort_source). Newest evidence wins."""
     model = effort = None
     msrc = esrc = None
+    model_ts = None
     pm = payload.get("model")
     if isinstance(pm, dict):
         pm = pm.get("id") or pm.get("display_name")
@@ -330,15 +391,23 @@ def live_model_effort(payload: dict, rows: list[dict]) -> tuple:
         if not model:
             m = SET_MODEL_RE.search(text)
             if m:
-                model, msrc = m.group(1).strip(), "/model"
+                model, msrc, model_ts = m.group(1).strip(), "/model", _ts(row.get("timestamp"))
             elif row.get("type") == "assistant" and isinstance(row.get("message"), dict):
                 mm = row["message"].get("model")
                 if mm and mm != "<synthetic>":
-                    model, msrc = mm, "transcript"
+                    model, msrc, model_ts = mm, "transcript", _ts(row.get("timestamp"))
         if not effort:
             e = SET_EFFORT_RE.search(text)
             if e:
                 effort, esrc = e.group(1).lower(), "/effort"
+    if msrc != "payload":
+        sw_model, sw_utc = latest_switch(str(payload.get("session_id") or ""))
+        sw_ts = _ts(sw_utc)
+        # A switch the hook SAW land beats anything older in the transcript.
+        # Seconds-only on the switch side, so a tie goes to the switch.
+        if sw_model and (not model or model_ts is None
+                         or (sw_ts and sw_ts >= model_ts.replace(microsecond=0))):
+            model, msrc = sw_model, "switch-hook"
     if not model:
         env_m = os.environ.get("ANTHROPIC_MODEL")
         if env_m:
@@ -466,6 +535,10 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
     text = (prompt or "").strip()
     if text.startswith("/"):
         return {"action": "skip", "verdict": "slash-command"}, state, None
+    if machine_prompt({}, text):
+        # Not Garrett: never graded (no cost), never held, and it must not
+        # touch a message of his that is waiting -- state passes through as is.
+        return {"action": "skip", "verdict": "not-typed"}, state, None
 
     override = OVERRIDE_RE.search(text)
     pending = state.get("pending")
@@ -533,6 +606,22 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
         state["blocks_in_a_row"] = 0
         return row, state, None
     state.pop("override", None)
+
+    if is_continue and pending:
+        # He was told "switch, then say go" and said go. Holding him a SECOND
+        # time is the bug he reported 2026-10-07 ("needs me to run it twice
+        # even if I switch"): when the gate cannot see the switch land, the
+        # failure is the gate's eyesight, not his. So go always sends the
+        # held message, and the row records that the switch was not seen.
+        row["action"] = "resume-unseen"
+        row["held_turns"] = pending.get("blocks", 1)
+        state["blocks_in_a_row"] = 0
+        state.pop("pending", None)
+        return row, state, _context(
+            "[tier-gate] Garrett said go after the tier hold, so his held message "
+            "goes through now (the gate could not confirm the switch; it still "
+            "reads " + pretty(cur_model, cur_effort) + "). Treat it as this turn's "
+            "request:\n<<<\n" + pending.get("prompt", "") + "\n>>>")
 
     if size not in HOLD_SIZES:
         # Wrong tier, but too little work for a switch to save usage.
@@ -642,6 +731,8 @@ def run(payload: dict) -> dict | None:
                          (os.environ.get("SKYNE_TIER_GATE_GRADER") or "haiku").lower(),
                          timeout)
     state = load_state(session)
+    if machine_prompt(payload, "") and not str(prompt).lstrip().startswith("/"):
+        return None   # the harness sent this, not Garrett: no grade, no row, no hold
     t0 = time.monotonic()
     fields, state, out = decide(prompt, cur_model, cur_effort, state, grader, mode)
     out = add_route(out, fields)
