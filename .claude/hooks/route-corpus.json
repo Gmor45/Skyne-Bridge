@@ -30,6 +30,10 @@
     {"prompt": "make a dashboard of my open pull requests across every repo", "expect": ["wick"]},
     {"prompt": "chart how many misses I caught versus claude caught each week this month", "expect": ["wick"]},
     {"prompt": "redo the companion layout so it reads properly on my phone", "expect": ["wick"]},
+    {"prompt": "pretend you're me on a lazy evening and try adding a scene in loom, tell me where you got stuck", "expect": ["wren"]},
+    {"prompt": "use the new pin board like I would without reading anything and tell me what's confusing", "expect": ["wren"]},
+    {"prompt": "walk through gauge as a business user who has never seen it and report every dead end", "expect": ["wren"]},
+    {"prompt": "open the morning page on a phone like I would half asleep and tell me what I couldn't find", "expect": ["wren"]},
     {"prompt": "what's the difference between a pin and a ruling again", "expect": ["none"]},
     {"prompt": "thanks, that's exactly what I wanted, nice work on that one", "expect": ["none"]},
     {"prompt": "how much of my weekly usage do I have left right now", "expect": ["none", "warden"]},
@@ -41,6 +45,11 @@
     {"prompt": "delete the duplicate paragraph near the top of the gauge readme", "expect": ["none", "ward"], "trap": "'delete' is Whittle's word; this is a one-line edit"},
     {"prompt": "decide on a name for the new dashboard and just build it", "expect": ["wistin", "wick"], "trap": "'decide' is Weir's word; the ask is to build"},
     {"prompt": "organize my thoughts on whether to take the job offer", "expect": ["weir", "none"], "trap": "'organize' is Ward's word; this is a decision"},
-    {"prompt": "explore the vault and find anything that contradicts the canon log", "expect": ["warden"], "trap": "'explore' sounds like Wander; this is an audit"}
+    {"prompt": "explore the vault and find anything that contradicts the canon log", "expect": ["warden"], "trap": "'explore' sounds like Wander; this is an audit"},
+    {"prompt": "try the new dashboard and fix whatever looks broken on it", "expect": ["warden", "wick"], "trap": "'try' is Wren's word; the ask is to fix, and Wren never fixes"},
+    {"prompt": "test whether the loom publish command still passes its leak check", "expect": ["warden"], "trap": "'test' sounds like Wren; this is running a check, not using the thing"},
+    {"prompt": "check out the new loom story board the way I would without reading anything and tell me where it confused you", "expect": ["wren"], "trap": "'check' is Warden's word; this is using it as Garrett would"},
+    {"prompt": "show me where a lazy version of me would get stuck trying to add a pin from my phone", "expect": ["wren"], "trap": "'show' is Wick's verb; this is using it and reporting friction"},
+    {"prompt": "decide for yourself which button you'd press first on the new dashboard, press it, and tell me what happened", "expect": ["wren"], "trap": "'decide' is Weir's word; this is using it"}
   ]
 }
