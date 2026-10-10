@@ -90,6 +90,8 @@ jobs:
         run: python3 .claude/hooks/delegate_reminder.py --self-test
       - name: Tier gate self-test (house-rules 2a, the Haiku grader)
         run: python3 .claude/hooks/tier_gate.py --self-test
+      - name: Tier gate golden cases + self-test ratchet (cases tier_gate.py cannot rewrite)
+        run: python3 .claude/hooks/tier_gate_golden.py
       - name: The tier gate is REGISTERED on UserPromptSubmit
         run: |
           python3 - <<'PY'

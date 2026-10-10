@@ -92,7 +92,14 @@ WHAT IT CANNOT SEE, SAID PLAINLY (house-rules 21 point 5)
   it (`tier_gate_report.py --harvest`, wired into /handoff).
 
 Env knobs:
-    SKYNE_TIER_GATE=block|warn|off          (default block)
+    SKYNE_TIER_GATE=route|block|warn|off    (default route)
+        route: a mismatch never stops him -- the main session is told to hand
+               the work to a subagent at the graded model + effort (Agent tool
+               `model`/`effort`). Garrett, 2026-10-10: "the ideal state is that
+               claude is able to just swap it out via an agent midway through".
+        block: the old behaviour -- hold the message until /model + `go`.
+    Fixed cases this file cannot rewrite: tier-gate-golden.json, run by
+    tier_gate_golden.py in CI (it also refuses a self-test count below its floor).
     SKYNE_TIER_GATE_GRADER=haiku|keywords   (default haiku)
     SKYNE_TIER_GATE_TIMEOUT=<seconds>       (default 25; the hook entry allows 30)
     SKYNE_TIER_GATE_LOG=<path>              (default ~/.claude/skyne/tier-gate.jsonl)
@@ -164,7 +171,10 @@ OVERRIDE_RE = re.compile(
 MACHINE_PREFIXES = ("<task-notification", "<system-reminder", "[SYSTEM NOTIFICATION",
                     "<wake", "<webhook-payload", "<child-session-event",
                     "<teammate-message", "<local-command", "<command-name>",
-                    "<<autonomous-loop", "<scheduled", "[Artifact comment")
+                    "<<autonomous-loop", "<scheduled", "[Artifact comment",
+                    # 2026-10-10: a subagent's hand-back and a message relayed
+                    # from another session were graded "Opus High" and held.
+                    "<agent-message", "<session-message", "<cross-session")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 SET_MODEL_RE = re.compile(r"[Ss]et model to\s+\**([A-Za-z][\w .\-\[\]]*)")
 SET_EFFORT_RE = re.compile(
@@ -221,7 +231,7 @@ W_VERBS = {"wistin": "makes", "ward": "keeps", "weir": "tees up a decision",
 ROUTE_SIZES = ("medium", "large")
 # The router speaks only when the message was let through to do work.
 ROUTE_ACTIONS = ("allow", "allow-small", "resume", "resume-unseen", "override",
-                 "override-held", "released")
+                 "override-held", "released", "delegate")
 
 
 # --------------------------------------------------------------------------
@@ -635,6 +645,25 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
             f" (and `/effort {rec_effort}`), then say `go` -- your message is saved."
             f" Or say `stay on {family(cur_model) or 'this'}` to override.")
 
+    if mode == "route":
+        # A session cannot change its own model; only /model can, and only he
+        # can type it. A subagent CAN run at any model, so the wrong tier is
+        # fixed by who does the work, not by stopping him.
+        row["action"] = "delegate"
+        state["blocks_in_a_row"] = 0
+        state.pop("pending", None)
+        rec = family(rec_model) or str(rec_model)
+        eff = f' and effort="{rec_effort}"' if rec_effort else ""
+        return row, state, _context(
+            "[tier-gate] Tier call: a " + pretty(rec_model, rec_effort) + " job ("
+            + (grade.get("why") or "no reason given") + "); this session is "
+            + pretty(cur_model, cur_effort) + ". Do NOT ask Garrett to switch. Do the "
+            "work through a subagent: Agent tool with model=\"" + rec + "\"" + eff
+            + " (his standing rule in ~/.claude/CLAUDE.md authorises the effort), "
+            "a full brief, and relay what it returns. Keep only routing and glue "
+            "on this session. If the job truly cannot be handed off (it needs this "
+            "conversation turn by turn), say so in one line and do it here.")
+
     if mode == "warn":
         row["action"] = "warn"
         return row, state, _context(
@@ -716,7 +745,7 @@ def now_utc() -> str:
 
 
 def run(payload: dict) -> dict | None:
-    mode = (os.environ.get("SKYNE_TIER_GATE") or "block").lower()
+    mode = (os.environ.get("SKYNE_TIER_GATE") or "route").lower()
     if mode == "off" or os.environ.get("SKYNE_TIER_GATE_CHILD"):
         return None
     session = str(payload.get("session_id") or "")
@@ -901,7 +930,9 @@ def self_test() -> int:
             f.write(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5-5", "content": "ok"}}) + "\n")
         os.environ["CLAUDE_EFFORT"] = "high"
         o = run({"prompt": "please rename all of the files in the docs folder to kebab case", "session_id": "s1", "transcript_path": tr})
-        check(isinstance(o, dict) and o.get("decision") == "block", "run(): opus on a rename is blocked")
+        o_ctx = (o or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+        check(isinstance(o, dict) and "decision" not in o and 'model="haiku"' in o_ctx,
+              "run(): by default opus on a rename is routed to a haiku subagent, never blocked")
         run({"prompt": "what is 2+2", "session_id": "s1", "transcript_path": tr})
         with open(os.environ["SKYNE_TIER_GATE_LOG"]) as f:
             logged = [json.loads(l) for l in f]
