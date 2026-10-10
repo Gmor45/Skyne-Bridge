@@ -957,6 +957,7 @@ def self_test() -> int:
         with open(tr, "w") as f:
             f.write(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5-5", "content": "ok"}}) + "\n")
         os.environ["CLAUDE_EFFORT"] = "high"
+        os.environ["SKYNE_TIER_GATE_SYNC"] = "1"   # log mode would otherwise write the row from a detached child, later
         os.environ["SKYNE_TIER_GATE"] = "route"
         o = run({"prompt": "please rename all of the files in the docs folder to kebab case", "session_id": "s1", "transcript_path": tr})
         os.environ.pop("SKYNE_TIER_GATE", None)
@@ -970,14 +971,12 @@ def self_test() -> int:
         check(logged[0]["verdict"] == "down" and logged[0]["model"] == "claude-opus-5-5"
               and logged[0]["effort"] == "high", "the row records live model, effort and verdict")
         # the default (log) mode: silent, yet the row is still written
-        os.environ["SKYNE_TIER_GATE_SYNC"] = "1"
         o = run({"prompt": "please rename all of the files in the docs folder to kebab case", "session_id": "s1", "transcript_path": tr})
-        os.environ.pop("SKYNE_TIER_GATE_SYNC", None)
         with open(os.environ["SKYNE_TIER_GATE_LOG"]) as f:
             last = [json.loads(l) for l in f][-1]
         check(o is None and last["action"] == "logged" and last["mode"] == "log" and last["verdict"] == "down",
               "run(): by default the gate says nothing and still logs the verdict")
-        for k in ("SKYNE_TIER_GATE_LOG", "SKYNE_TIER_GATE_GRADER", "CLAUDE_EFFORT"):
+        for k in ("SKYNE_TIER_GATE_LOG", "SKYNE_TIER_GATE_GRADER", "CLAUDE_EFFORT", "SKYNE_TIER_GATE_SYNC"):
             os.environ.pop(k, None)
 
     # fail open: garbage stdin -> exit 0, nothing printed
