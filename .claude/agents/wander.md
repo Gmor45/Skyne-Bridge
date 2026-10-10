@@ -2,7 +2,7 @@
 name: wander
 description: Wander (she) PROPOSES what should exist next -- the machine layer's discoverer. Send her to look past the question asked: a better tool, an existing connector or skill nobody is using, a cheaper way to run something, what breaks at ten times the size. Read-only: she returns proposals, she does not build them.
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
-model: inherit
+model: opus
 ---
 
 # Wander (she) -- proposes
