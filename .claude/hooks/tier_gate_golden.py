@@ -90,12 +90,14 @@ def run_invariants() -> list[str]:
 
     # with the knob unset, run() never blocks
     saved = {k: os.environ.pop(k, None) for k in ("SKYNE_TIER_GATE", "SKYNE_TIER_GATE_LOG",
-                                                  "SKYNE_TIER_GATE_CHILD", "CLAUDE_EFFORT")}
+                                                  "SKYNE_TIER_GATE_CHILD", "CLAUDE_EFFORT",
+                                                  "SKYNE_TIER_GATE_SYNC")}
     real = tier_gate.make_grader
     with tempfile.TemporaryDirectory() as tmp:
         try:
             os.environ["SKYNE_TIER_GATE_LOG"] = os.path.join(tmp, "tier-gate.jsonl")
             os.environ["CLAUDE_EFFORT"] = "medium"
+            os.environ["SKYNE_TIER_GATE_SYNC"] = "1"   # grade inline, so the patched grader is the one used
             tr = os.path.join(tmp, "t.jsonl")
             with open(tr, "w") as f:
                 f.write(json.dumps({"type": "assistant",

@@ -92,7 +92,13 @@ WHAT IT CANNOT SEE, SAID PLAINLY (house-rules 21 point 5)
   it (`tier_gate_report.py --harvest`, wired into /handoff).
 
 Env knobs:
-    SKYNE_TIER_GATE=route|block|warn|off    (default route)
+    SKYNE_TIER_GATE=log|route|block|warn|off  (default log)
+        log:   measure, never steer (Garrett, 2026-10-10, after the web showed
+               nobody auto-switches the main model and the gate kept misreading
+               his picker). The hook returns at once; a detached child grades
+               and writes the row, so there is no lag and nothing is injected.
+               Routing lives in the agents' own `model:` frontmatter instead.
+    SKYNE_TIER_GATE_SYNC=1                  grade inline even in log mode (tests)
         route: a mismatch never stops him -- the main session is told to hand
                the work to a subagent at the graded model + effort (Agent tool
                `model`/`effort`). Garrett, 2026-10-10: "the ideal state is that
@@ -645,6 +651,13 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
             f" (and `/effort {rec_effort}`), then say `go` -- your message is saved."
             f" Or say `stay on {family(cur_model) or 'this'}` to override.")
 
+    if mode == "log":
+        # Recorded for tier_outcomes.py to score; nothing said, nothing held.
+        row["action"] = "logged"
+        state["blocks_in_a_row"] = 0
+        state.pop("pending", None)
+        return row, state, None
+
     if mode == "route":
         # A session cannot change its own model; only /model can, and only he
         # can type it. A subagent CAN run at any model, so the wrong tier is
@@ -745,8 +758,11 @@ def now_utc() -> str:
 
 
 def run(payload: dict) -> dict | None:
-    mode = (os.environ.get("SKYNE_TIER_GATE") or "route").lower()
+    mode = (os.environ.get("SKYNE_TIER_GATE") or "log").lower()
     if mode == "off" or os.environ.get("SKYNE_TIER_GATE_CHILD"):
+        return None
+    if mode == "log" and not os.environ.get("SKYNE_TIER_GATE_SYNC"):
+        detach(payload)   # the prompt goes through now; the row lands a few seconds later
         return None
     session = str(payload.get("session_id") or "")
     prompt = payload.get("prompt") or ""
@@ -764,7 +780,8 @@ def run(payload: dict) -> dict | None:
         return None   # the harness sent this, not Garrett: no grade, no row, no hold
     t0 = time.monotonic()
     fields, state, out = decide(prompt, cur_model, cur_effort, state, grader, mode)
-    out = add_route(out, fields)
+    if mode != "log":
+        out = add_route(out, fields)
     state["turn"] = int(state.get("turn", 0)) + 1
     save_state(session, state)
     remote = os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or ""
@@ -940,17 +957,26 @@ def self_test() -> int:
         with open(tr, "w") as f:
             f.write(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5-5", "content": "ok"}}) + "\n")
         os.environ["CLAUDE_EFFORT"] = "high"
+        os.environ["SKYNE_TIER_GATE_SYNC"] = "1"   # log mode would otherwise write the row from a detached child, later
+        os.environ["SKYNE_TIER_GATE"] = "route"
         o = run({"prompt": "please rename all of the files in the docs folder to kebab case", "session_id": "s1", "transcript_path": tr})
+        os.environ.pop("SKYNE_TIER_GATE", None)
         o_ctx = (o or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
         check(isinstance(o, dict) and "decision" not in o and 'model="haiku"' in o_ctx,
-              "run(): by default opus on a rename is routed to a haiku subagent, never blocked")
+              "run(): route mode sends opus-on-a-rename to a haiku subagent, never blocks")
         run({"prompt": "what is 2+2", "session_id": "s1", "transcript_path": tr})
         with open(os.environ["SKYNE_TIER_GATE_LOG"]) as f:
             logged = [json.loads(l) for l in f]
         check(len(logged) == 2 and [x["turn"] for x in logged] == [1, 2], "every message writes exactly one numbered row")
         check(logged[0]["verdict"] == "down" and logged[0]["model"] == "claude-opus-5-5"
               and logged[0]["effort"] == "high", "the row records live model, effort and verdict")
-        for k in ("SKYNE_TIER_GATE_LOG", "SKYNE_TIER_GATE_GRADER", "CLAUDE_EFFORT"):
+        # the default (log) mode: silent, yet the row is still written
+        o = run({"prompt": "please rename all of the files in the docs folder to kebab case", "session_id": "s1", "transcript_path": tr})
+        with open(os.environ["SKYNE_TIER_GATE_LOG"]) as f:
+            last = [json.loads(l) for l in f][-1]
+        check(o is None and last["action"] == "logged" and last["mode"] == "log" and last["verdict"] == "down",
+              "run(): by default the gate says nothing and still logs the verdict")
+        for k in ("SKYNE_TIER_GATE_LOG", "SKYNE_TIER_GATE_GRADER", "CLAUDE_EFFORT", "SKYNE_TIER_GATE_SYNC"):
             os.environ.pop(k, None)
 
     # fail open: garbage stdin -> exit 0, nothing printed
@@ -1009,6 +1035,21 @@ def self_test() -> int:
     return 0
 
 
+def detach(payload: dict) -> None:
+    """Grade and log in a background process, so log mode never delays a prompt."""
+    try:
+        kw = ({"creationflags": 0x00000008 | 0x00000200} if os.name == "nt"   # DETACHED_PROCESS | NEW_GROUP
+              else {"start_new_session": True})
+        p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--log-child"],
+                             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             env=dict(os.environ, SKYNE_TIER_GATE_SYNC="1"), **kw)
+        p.stdin.write(json.dumps(payload).encode("utf-8"))
+        p.stdin.close()
+    except Exception:
+        pass   # fail open: measuring must never break prompt submission
+
+
 def main() -> None:
     if "--self-test" in sys.argv:
         sys.exit(self_test())
@@ -1024,7 +1065,7 @@ def main() -> None:
         if not isinstance(payload, dict):
             sys.exit(0)
         out = run(payload)
-        if out:
+        if out and "--log-child" not in sys.argv:
             print(json.dumps(out))
     except SystemExit:
         raise
