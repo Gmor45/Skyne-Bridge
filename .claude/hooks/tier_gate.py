@@ -776,8 +776,19 @@ def run(payload: dict) -> dict | None:
                     mode=mode, model=cur_model, effort=cur_effort,
                     model_source=msrc, effort_seen=bool(cur_effort),
                     gate_ms=int((time.monotonic() - t0) * 1000),
-                    prompt_chars=len(prompt)))
+                    prompt_chars=len(prompt), prompt_tag=prompt_tag(prompt)))
     return out
+
+
+PROMPT_TAG_RE = re.compile(r"^\s*(<[A-Za-z][\w-]*|\[[A-Za-z][A-Za-z ]{0,30})")
+
+
+def prompt_tag(prompt) -> str | None:
+    """The opening harness-style tag, if any (`<agent-message`). Logged so
+    Skyne's tier_gate_misses.py can file 'the gate acted on a message Garrett
+    never typed' from the log alone -- deterministic, no judgement, no text kept."""
+    m = PROMPT_TAG_RE.match(str(prompt or ""))
+    return m.group(1).strip() if m else None
 
 
 # --------------------------------------------------------------------------

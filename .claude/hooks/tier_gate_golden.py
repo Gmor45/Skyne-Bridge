@@ -81,6 +81,13 @@ def run_invariants() -> list[str]:
                     fails.append(f"invariant: {mode}/{size} {cur[0]}->{rec[0]} was let through "
                                  f"silently (action {row.get('action')!r})")
 
+    # the log keeps the opening tag Skyne's miss detector reads -- and only the tag
+    for raw, want in (('<agent-message from="x">long text', "<agent-message"),
+                      ("[SYSTEM NOTIFICATION - NOT USER INPUT] x", "[SYSTEM NOTIFICATION"),
+                      ("please rename the files", None)):
+        if tier_gate.prompt_tag(raw) != want:
+            fails.append(f"invariant: prompt_tag({raw[:20]!r}) = {tier_gate.prompt_tag(raw)!r}, want {want!r}")
+
     # with the knob unset, run() never blocks
     saved = {k: os.environ.pop(k, None) for k in ("SKYNE_TIER_GATE", "SKYNE_TIER_GATE_LOG",
                                                   "SKYNE_TIER_GATE_CHILD", "CLAUDE_EFFORT")}
