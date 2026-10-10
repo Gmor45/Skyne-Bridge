@@ -32,6 +32,11 @@
      "model": "claude-sonnet-5-5", "effort": "medium", "mode": "block",
      "grade": {"model": "opus", "effort": "high", "size": "large"},
      "expect": {"action": "block", "output": "block"}},
+    {"name": "log mode (the default since 2026-10-10) records a big mismatch and says nothing",
+     "prompt": "please audit every promise in the repo and fix the ones that fail today",
+     "model": "claude-sonnet-5-5", "effort": "medium", "mode": "log",
+     "grade": {"model": "opus", "effort": "high", "size": "large"},
+     "expect": {"action": "logged", "verdict": "up", "output": "none"}},
     {"name": "a matched tier passes with no hold",
      "prompt": "please audit every promise in the repo and fix the ones that fail today",
      "model": "claude-opus-5-5", "effort": "high", "mode": "route",
@@ -39,7 +44,7 @@
      "expect": {"action": "allow"}}
   ],
   "invariants": [
-    "In EVERY mode except off, a medium/large mismatch is never silently allowed: it is delegated, blocked or warned.",
+    "In route, block and warn modes, a medium/large mismatch is never silently allowed: it is delegated, blocked or warned. Log mode is silent by design but must still record it (case above).",
     "With SKYNE_TIER_GATE unset, run() never returns a block."
   ]
 }
