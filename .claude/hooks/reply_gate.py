@@ -906,6 +906,16 @@ def _wrapup_tail(text):
     return " ".join(t.split()).lower()
 
 
+def current_wrapup(entries, boundary):
+    """The newest message this turn that carries a full wrap-up on its own,
+    or None. That message is the wrap-up Garrett reads; rejected drafts above
+    it are history and must not count toward its length or sections."""
+    for t in reversed(_assistant_texts(entries, boundary, len(entries))):
+        if is_full_wrapup(t):
+            return t
+    return None
+
+
 def any_wrapup_in_turn(entries, boundary):
     """True when ANY message this turn already carries a full wrap-up, the
     rejected drafts included. Used only to choose what the rejection asks
@@ -1134,7 +1144,8 @@ def design_opted_out(text):
 
 def evaluate(text, tools=None, require_block=True, handoff_done=True,
              stock_text=None, wrapup_count=1, companion_done=True,
-             drew=None, design_done=True, chain_done=True, unran=None):
+             drew=None, design_done=True, chain_done=True, unran=None,
+             block_src=None):
     """Return a list of complaints. Empty list == the reply passes.
 
     Pure and transcript-free so the self-test exercises the real thing rather
@@ -1159,6 +1170,9 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     to True so a caller that cannot say never triggers a false refusal.
     `unran` is ran_it.check()'s finding for this turn, or None — computed by
     the caller from the turn's tool calls, defaulting to the non-firing value.
+    `block_src` is the text the closing-block SHAPE checks read (sections,
+    order, Recommendations count, length) — the newest message carrying a full
+    wrap-up (see current_wrapup), or None to read the whole turn.
     """
     # CORRECTED 2026-09-23: checks that look for a BAD PHRASE read the newest
     # block when the caller passes it. The joined turn still holds any draft
@@ -1468,11 +1482,20 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     if not require_block:
         return problems
 
-    lines = text.splitlines()
-    i_about = find_line(text, ABOUT_RE)
-    i_what = find_line(text, WHAT_RE)
-    i_why = find_line(text, WHY_RE)
-    i_tldr = find_line(text, TLDR_RE)
+    # CORRECTED 2026-10-10: the shape checks below read ONE wrap-up, not the
+    # joined turn. Measured live: a 210-word block was refused for length, the
+    # corrected 120-word block was sent, and every later check measured "from
+    # the first What I did to the end of the turn" -- 407, 473, 485, 557, 564
+    # words -- and counted the rejected draft's Recommendations as a second
+    # section. Each reply, even a one-word one, only grew the number, so no
+    # reply could pass; Garrett had to press Esc. Same disease as the
+    # 2026-10-06 note in wrapups_this_turn, in the checks that note missed.
+    src = text if block_src is None else block_src
+    lines = src.splitlines()
+    i_about = find_line(src, ABOUT_RE)
+    i_what = find_line(src, WHAT_RE)
+    i_why = find_line(src, WHY_RE)
+    i_tldr = find_line(src, TLDR_RE)
 
     if i_about < 0:
         problems.append('no "**About**" line — name the SUBJECT in his vocabulary '
@@ -1637,9 +1660,18 @@ def _state_dir():
     return os.path.join(home, ".reply-gate")
 
 
-def counter_path():
+def counter_path(transcript_path=None):
+    """One retry counter PER SESSION. CORRECTED 2026-10-10: this was one
+    global file, so with several chats open every other chat's Stop overwrote
+    turn_key and reset this chat's count to 1 -- measured live, nine refusals
+    in one turn against a LOCAL_CAP of 2, the cap never reached while five
+    sessions shared the file. Same hashed-path key as cooldown_path below."""
+    import hashlib
     d = _state_dir()
-    return d, os.path.join(d, "turn-counter.json")
+    if not transcript_path:
+        return d, os.path.join(d, "turn-counter.json")
+    key = hashlib.sha256(transcript_path.encode()).hexdigest()[:16]
+    return d, os.path.join(d, "turn-counter-%s.json" % key)
 
 
 # ---------------------------------------------------------------- cooldown
@@ -1693,8 +1725,8 @@ def record_cooldown(transcript_path, since_last, required_block):
         pass  # best effort; a lost state file just re-triggers next turn
 
 
-def bump(turn_key):
-    d, p = counter_path()
+def bump(turn_key, transcript_path=None):
+    d, p = counter_path(transcript_path)
     state = {}
     try:
         with open(p, encoding="utf-8") as f:
@@ -2318,6 +2350,25 @@ def self_test():
 
     _user_turn = {"type": "user", "message": {"content": "go"}}
 
+    # 2026-10-10 loop: block shape is read from ONE wrap-up (block_src), so a
+    # rejected long draft above a corrected one must not count against it --
+    # but a long block that IS the newest wrap-up still fails.
+    long_draft = GOOD.replace("**TLDR**", "- " + "padding " * 200 + "\n\n**TLDR**")
+    joined = long_draft + "\n\nshort fix note\n\n" + GOOD
+    ok = evaluate(joined, wrapup_count=1, block_src=GOOD) == []
+    print("  %-34s %s" % ("loop: rejected draft not re-measured", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("a corrected wrap-up must be judged alone, not joined to its rejected draft")
+    ok = any("closing block is" in g for g in evaluate(long_draft, block_src=long_draft))
+    print("  %-34s %s" % ("loop: PLANTED long newest block fires", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("block_src must not silence a too-long block that IS the newest")
+    a, b = counter_path("C:/t/a.jsonl")[1], counter_path("C:/t/b.jsonl")[1]
+    ok = a != b
+    print("  %-34s %s" % ("loop: retry counter is per-session", "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("two sessions must not share one retry counter (cap reset)")
+
     # Direct evaluate() cases: the required single wrap-up must stay silent,
     # and a planted count of two must refuse.
     ok = evaluate(GOOD, wrapup_count=1) == []
@@ -2777,7 +2828,8 @@ def run():
                             design_done=design_checked(entries, b),
                             chain_done=chain_run(entries),
                             unran=ran_it.check(list(_tool_calls(entries, b)),
-                                               latest_prose(entries, b) or text))
+                                               latest_prose(entries, b) or text),
+                            block_src=current_wrapup(entries, b))
         print("reply words: %d" % words(text))
         print("tools this turn: %s" % (sorted(tools_used(entries, b)) or "none"))
         print("wrap-ups this turn: %d" % wrapups)
@@ -2824,7 +2876,8 @@ def run():
                         design_done=design_checked(entries, boundary),
                         chain_done=chain_run(entries),
                         unran=ran_it.check(list(_tool_calls(entries, boundary)),
-                                           latest_prose(entries, boundary) or text))
+                                           latest_prose(entries, boundary) or text),
+                        block_src=current_wrapup(entries, boundary))
     if not problems:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
@@ -2833,7 +2886,7 @@ def run():
 
     e = entries[boundary] if boundary >= 0 else {}
     key = e.get("uuid") or e.get("timestamp") or "unkeyed"
-    n = bump(key)
+    n = bump(key, transcript_path)
     if n > LOCAL_CAP:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)
