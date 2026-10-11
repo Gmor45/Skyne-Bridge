@@ -45,7 +45,7 @@ WHAT IT DOES, EVERY MESSAGE
    corresponding agent, the agent does the thing, and then I'm done. The Ws
    are the buckets that all skyne falls into."* The SAME Haiku call now also
    names the bucket (`w`: one of the family -- eight since Wren joined on
-   2026-10-07 -- or `none`). When the message is
+   2026-10-07, nine since Wince joined on 2026-10-11 -- or `none`). When the message is
    let through and the job is `medium` or `large`, the hook adds one line of
    context telling the session which agent the job belongs to. A `small` job
    is never routed: a subagent re-reads its context, so routing a one-line
@@ -208,13 +208,20 @@ SYSTEM = (
     "the end user (Garrett on a lazy day, or a first-time user): use "
     "something ALREADY BUILT and runnable (an app, page, board, command) "
     "with no docs and report where a person would get confused or stuck -- "
-    "a report only, never a fix; none = a "
+    "a report only, never a fix; wince = critique something made to be "
+    "READ (a story, lore, a recap, prose, instructions): grade it and name "
+    "where it fails, anchored to quotes -- a critique only, never a rewrite; "
+    "none = a "
     "question, chat, status or anything else. Judge by the THING asked for, not "
     "the verb: a dashboard, chart, diagram, board or layout is wick even when "
     "the verb is make, build or redo; using a built thing as the user would "
     "and reporting where it sticks is wren even when the verb is show, check "
     "or test, but a job that asks for a FIX (fix, repair, make it work) is "
-    "never wren even when it says try or use; researching, searching or "
+    "never wren even when it says try or use; judging whether writing is "
+    "GOOD (grade, critique, review, be honest about the prose) is wince even "
+    "when the verb is check or show, but a job that asks to rewrite, edit or "
+    "draft the prose is wistin, and checking writing against a signed-off "
+    "rule is warden; researching, searching or "
     "asking what tools, connectors or options already exist is wander; "
     "weighing tradeoffs or being unable to decide is weir; archiving or "
     "finding what nothing uses any more is whittle; a new pin, task, script "
@@ -223,17 +230,18 @@ SYSTEM = (
     "Reply with ONE line of JSON only: "
     '{"model":"haiku|sonnet|opus","effort":"low|medium|high",'
     '"size":"small|medium|large",'
-    '"w":"wistin|ward|weir|wander|warden|whittle|wick|wren|none","why":"<=12 words"}'
+    '"w":"wistin|ward|weir|wander|warden|whittle|wick|wren|wince|none","why":"<=12 words"}'
 )
 
 # The Skyne Family members, in the card's order (eight since 2026-10-07, when
-# Wren joined). Each is an agent in
+# Wren joined; nine since 2026-10-11, when Wince joined). Each is an agent in
 # .claude/agents/<id>.md; ci.yml checks this tuple against SPEAKER_LABELS.
-W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren")
+W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren", "wince")
 W_VERBS = {"wistin": "makes", "ward": "keeps", "weir": "tees up a decision",
            "wander": "looks past the ask", "warden": "checks",
            "whittle": "decides what to retire", "wick": "shows",
-           "wren": "uses it the way Garrett would"}
+           "wren": "uses it the way Garrett would",
+           "wince": "critiques it, not a yes man"}
 ROUTE_SIZES = ("medium", "large")
 # The router speaks only when the message was let through to do work.
 ROUTE_ACTIONS = ("allow", "allow-small", "resume", "resume-unseen", "override",
