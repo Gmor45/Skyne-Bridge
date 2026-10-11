@@ -47,9 +47,9 @@ import sys
 import tempfile
 
 # The family, in the card's order (Skyne data/skyne-family.json) -- eight
-# since Wren joined on 2026-10-07.
+# since Wren joined on 2026-10-07, nine since Wince joined on 2026-10-11.
 # ci.yml checks this tuple against reply_gate.SPEAKER_LABELS.
-W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren")
+W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren", "wince")
 
 
 def log_path() -> str:

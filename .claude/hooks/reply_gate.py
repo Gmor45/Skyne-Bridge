@@ -648,17 +648,18 @@ def permission_wall_no_local_offer(text):
     return not NAMES_LOCAL_ALTERNATIVE.search(t)
 
 
-# House-rules 32: nine speaker labels since 2026-10-07 (Wistin, Ward, Weir,
-# Wander, Warden, Whittle, Wick, Wren, Claude) -- Wick, who SHOWS, joined
+# House-rules 32: ten speaker labels since 2026-10-11 (Wistin, Ward, Weir,
+# Wander, Warden, Whittle, Wick, Wren, Wince, Claude) -- Wick, who SHOWS, joined
 # 2026-10-03 ("Yeah let's make it"); Wren, who USES what the family made the
-# way Garrett would, joined 2026-10-07 ("yes to Wren - definitley a guy").
-# "Claude:" is not a persona -- it names the absence of one, which is why
-# EVERY substantive reply carries one of the nine, not only the eight
+# way Garrett would, joined 2026-10-07 ("yes to Wren - definitley a guy");
+# Wince, who CRITIQUES what the family made ("not a yes man"), joined
+# 2026-10-11. "Claude:" is not a persona -- it names the absence of one, which
+# is why EVERY substantive reply carries one of the ten, not only the nine
 # persona-shaped ones. Checked as a leading label on
 # the first non-blank line, matching how the labels are actually written in
 # practice (their own worked examples in house-rules 32 open a line with
 # "Wander:" etc).
-SPEAKER_LABELS = ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Wick", "Wren", "Claude")
+SPEAKER_LABELS = ("Wistin", "Ward", "Weir", "Wander", "Warden", "Whittle", "Wick", "Wren", "Wince", "Claude")
 # Markdown bold can wrap either side of the colon ("**Claude:**" or
 # "**Claude**:"), or be absent entirely ("Claude:") -- strip asterisks before
 # matching rather than trying to enumerate every wrapping.
@@ -1339,9 +1340,9 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
             "session"
         )
 
-    # house-rules 32: nine speaker labels, and "Claude:" is not a persona --
+    # house-rules 32: ten speaker labels, and "Claude:" is not a persona --
     # it names the absence of one, so every substantive reply carries one of
-    # the nine.
+    # the ten.
     #
     # CORRECTED 2026-09-23: `text` is every block of the turn joined, so it
     # always opens with the FIRST block -- often a one-line progress note sent
@@ -1355,8 +1356,8 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
         stock_text is not None and has_speaker_label(stock_text))
     if not labelled:
         problems.append(
-            "this reply carries none of house-rules 32's nine speaker "
-            "labels (Wistin/Ward/Weir/Wander/Warden/Whittle/Wick/Wren/Claude:). "
+            "this reply carries none of house-rules 32's ten speaker "
+            "labels (Wistin/Ward/Weir/Wander/Warden/Whittle/Wick/Wren/Wince/Claude:). "
             "Open with whichever matches the work -- Claude: names the "
             "absence of a persona, it is not a thing to skip"
         )
@@ -1757,7 +1758,7 @@ SAMPLE_BODY = (
 
 # house-rules 32: SAMPLE_BODY/GOOD deliberately carry NO label of their own --
 # every fixture that composes a reply from them is responsible for putting
-# "**Claude:** " (or another of the nine) at the TRUE start of the text it
+# "**Claude:** " (or another of the ten) at the TRUE start of the text it
 # builds, the same way a real reply would. Baking the label into SAMPLE_BODY
 # would silently pass every "phrase + GOOD" fixture in this file regardless
 # of what the phrase actually put first, which defeats the point of an
@@ -2757,7 +2758,7 @@ def self_test():
     if not ok:
         fails.append('PLANTED case: an unrelated transcript must report chain_run False')
 
-    # ---- house-rules 32: nine speaker labels --------------------------------
+    # ---- house-rules 32: ten speaker labels ---------------------------------
     expect("32: no label at all fires", "Just an ordinary reply. " + GOOD, False)
     for lbl in SPEAKER_LABELS:
         expect("32: %s: opens cleanly" % lbl,
@@ -2766,6 +2767,8 @@ def self_test():
            "Wick: Drawing it so it can be seen. " + GOOD, True)
     expect("32: Wren: opens cleanly (the eighth member, 2026-10-07)",
            "Wren: Tried it the lazy way and got stuck twice. " + GOOD, True)
+    expect("32: Wince: opens cleanly (the ninth member, 2026-10-11)",
+           "Wince: Grade 2 of 5; the middle scene loses the reader. " + GOOD, True)
     expect("32: a bold **Claude:** opener also passes",
            "**Claude:** Doing the work. " + GOOD, True)
     expect("32: a label mid-body does NOT count as opening with it",
