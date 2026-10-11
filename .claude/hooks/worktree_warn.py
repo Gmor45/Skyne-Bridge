@@ -104,7 +104,22 @@ def run_hook(stream=None) -> int:
         return 0
     if payload.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
         return 0
+    # CORRECTED 2026-10-10: check the repo the FILE lives in, not the
+    # session's cwd. Measured live: a session started in ~/.claude (on main)
+    # editing files inside a proper worktree got this warning on all nine
+    # edits -- a warning that is always wrong teaches everyone to ignore it.
     cwd = payload.get("cwd")
+    fp = (payload.get("tool_input") or {}).get("file_path")
+    if fp:
+        import os
+        d = os.path.dirname(fp)
+        while d and not os.path.isdir(d):  # Write may create new folders
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+        if d and os.path.isdir(d):
+            cwd = d
     try:
         shared, branch = is_shared_main_checkout(cwd)
     except Exception:
