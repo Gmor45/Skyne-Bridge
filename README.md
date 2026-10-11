@@ -160,6 +160,7 @@ syncs:
 | `whittle` | retires — decides what no longer earns its place, with evidence | no |
 | `wick` | shows — draws it, starting from who is looking | yes |
 | `wren` | uses — tries it the way Garrett would, no docs, and reports where it got stuck (added 2026-10-07) | no |
+| `wince` | critiques — grades writing and names where it fails, anchored to quotes; never rewrites (added 2026-10-11) | no |
 
 Each file holds only the member's identity; what they do in a given product is
 read live from `Skyne/data/skyne-family.json` (house-rules 39 — a surface that
