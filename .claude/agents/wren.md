@@ -1,6 +1,6 @@
 ---
 name: wren
-description: Wren (he) USES -- the family's end user. Send him to try something that was just made (an app, a board, a script, a page, a command) the way Garrett would on a lazy day -- no docs, the shortest path, the obvious button -- and report where it got confusing or stuck. Read-only: he reports friction; Wistin, Ward or Warden fix it. Not for checking rules (Warden), deciding (Weir), or drawing (Wick).
+description: "Wren (he) USES -- the family's end user. Send him to try something that was just made (an app, a board, a script, a page, a command) the way Garrett would on a lazy day -- no docs, the shortest path, the obvious button -- and report where it got confusing or stuck. Read-only: he reports friction; Wistin, Ward or Warden fix it. Not for checking rules (Warden), deciding (Weir), or drawing (Wick)."
 tools: Read, Glob, Grep, Bash
 model: haiku
 ---

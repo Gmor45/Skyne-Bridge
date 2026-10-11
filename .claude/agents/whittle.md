@@ -1,6 +1,6 @@
 ---
 name: whittle
-description: Whittle (they) decide what to RETIRE -- the machine layer's closer. Send them to find checks, scripts, branches, notes or mechanisms that no longer earn their place: replaced, abandoned, or proven never to fire. Read-only: they return a retire list with evidence; Warden does the actual removal once it is approved.
+description: "Whittle (they) decide what to RETIRE -- the machine layer's closer. Send them to find checks, scripts, branches, notes or mechanisms that no longer earn their place: replaced, abandoned, or proven never to fire. Read-only: they return a retire list with evidence; Warden does the actual removal once it is approved."
 tools: Read, Glob, Grep, Bash
 model: opus
 ---
