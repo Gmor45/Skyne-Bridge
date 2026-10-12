@@ -39,11 +39,14 @@ WHAT THIS SCRIPT DOES
 1. Reads the SessionStart hook's stdin JSON for the real `cwd` (the CLI
    supplies it; do not guess from `$CLAUDE_PROJECT_DIR`, which this exact
    failure shape leaves unset).
-2. Looks for a claude-audit checkout: first `cwd` itself (a session whose
-   *only* source is claude-audit), then cwd's immediate subdirectories (a
-   multi-repo session) — matching on the presence of
-   `scripts/session_start.py` alongside `data/misses.json`, so a
-   similarly-named unrelated directory cannot false-positive.
+2. Looks for a claude-audit checkout: first `$SKYNE_DIR` if it is set (a
+   desktop or laptop whose clone lives at a fixed place no cwd search can
+   reach), then `cwd` itself (a session whose *only* source is
+   claude-audit), then cwd's immediate subdirectories (a multi-repo
+   session) — matching on the presence of `scripts/session_start.py`
+   alongside `data/misses.json`, so a similarly-named unrelated directory
+   cannot false-positive. A `$SKYNE_DIR` that fails the marker test is
+   ignored, never trusted.
 3. If found: run IT and pass its output through verbatim. This is a
    caller, not a reimplementation — the rules and the live counts still
    live in exactly one place, per this plugin's own no-duplication rule.
@@ -60,7 +63,16 @@ import subprocess
 import sys
 
 TIMEOUT_SECONDS = 12
-MAX_SEARCH_DEPTH_NOTE = "cwd and its immediate children only — this is a nudge, not a filesystem crawl"
+MAX_SEARCH_DEPTH_NOTE = "$SKYNE_DIR, then cwd and its immediate children only — this is a nudge, not a filesystem crawl"
+
+# The fully-qualified name, never the bare 'house-rules': on a machine whose
+# claude.ai account also syncs an old full copy of the rules as a skill named
+# 'house-rules', the bare name resolved to THAT copy -- measured 2026-10-12
+# on Garrett's HDS laptop, a 746-line copy from 2026-09-16 against core's
+# 3,109 lines, missing rules 21 and 29, which the session then broke.
+LOAD_SKILL = "Skill('load-house-rules:load-house-rules')"
+NOT_THE_COPY = ("not a skill named plain 'house-rules': an account-synced "
+                "copy by that name can be weeks stale")
 
 
 def _read_stdin_cwd():
@@ -91,7 +103,13 @@ def _looks_like_claude_audit(path):
 def find_claude_audit(cwd):
     """Return an absolute path to a claude-audit checkout reachable from this
     session, or None. Checks cwd itself first (single-source session), then
-    cwd's immediate children (multi-repo session — the shape that broke)."""
+    cwd's immediate children (multi-repo session — the shape that broke).
+    `$SKYNE_DIR` wins when it passes the marker test: a local machine keeps
+    its clone at one fixed place, and no cwd search reaches it from an
+    unrelated project (2026-10-12: `~/.claude/personal/Skyne`)."""
+    pinned = os.environ.get("SKYNE_DIR", "").strip()
+    if pinned and os.path.isdir(pinned) and _looks_like_claude_audit(pinned):
+        return os.path.abspath(pinned)
     if _looks_like_claude_audit(cwd):
         return cwd
     try:
@@ -123,12 +141,14 @@ def not_found_message(cwd):
         "=== load-house-rules plugin · SessionStart ===",
         "",
         "The brain repo (skyne, formerly claude-audit; spelled skine for one day)",
-        "is not reachable from this session (checked cwd and its immediate",
-        f"children under {cwd}, by content — any of those directory names would",
-        "have matched).",
+        "is not reachable from this session (checked $SKYNE_DIR, then cwd and",
+        f"its immediate children under {cwd}, by content — any of those",
+        "directory names would have matched).",
         "",
-        "LOAD THE RULES ANYWAY: Skill('house-rules'). It can clone the private",
-        "repo itself. Do not proceed on any of Gmor45's repos, or on git, commits,",
+        f"LOAD THE RULES ANYWAY: {LOAD_SKILL} — {NOT_THE_COPY}.",
+        "It can clone the private repo itself. If this machine keeps a clone at",
+        "a fixed place, set SKYNE_DIR to it in ~/.claude/settings.json `env`.",
+        "Do not proceed on any of Gmor45's repos, or on git, commits,",
         "PRs, model/effort choice, or cost, without them loaded first.",
         "",
         "If this is unexpected — the brain repo genuinely IS attached — say so",
@@ -160,7 +180,7 @@ def brief():
         f"Found the brain repo at {audit_root}, but its own session_start.py",
         "produced no output" + (f" ({degraded_reason})" if degraded_reason else "") + ".",
         "",
-        "LOAD THE RULES ANYWAY: Skill('house-rules').",
+        f"LOAD THE RULES ANYWAY: {LOAD_SKILL} — {NOT_THE_COPY}.",
         "=== end ===",
     ]
     return "\n".join(msg)
@@ -210,8 +230,10 @@ def self_test():
         if found is not None:
             fails.append("must not false-positive on a directory with neither marker file")
         msg = not_found_message(empty)
-        if "Skill('house-rules')" not in msg:
+        if LOAD_SKILL not in msg:
             fails.append("not-found path must still tell the session to load the skill")
+        if "Skill('house-rules')" in msg:
+            fails.append("not-found path must never name the bare 'house-rules' skill (it can resolve to a stale account copy)")
         if "not reachable" not in msg:
             fails.append("not-found path must say plainly that it could not find claude-audit")
 
@@ -224,11 +246,38 @@ def self_test():
         if _looks_like_claude_audit(tmp):
             fails.append("one marker file alone must not be treated as a real checkout")
 
+    # 5. $SKYNE_DIR finds a clone no cwd search can reach (2026-10-12: the
+    #    laptop keeps it at ~/.claude/personal/Skyne, two levels below cwd)
+    saved = os.environ.get("SKYNE_DIR")
+    try:
+        with tempfile.TemporaryDirectory() as clone, tempfile.TemporaryDirectory() as elsewhere:
+            os.makedirs(os.path.join(clone, "scripts"))
+            os.makedirs(os.path.join(clone, "data"))
+            with open(os.path.join(clone, "scripts", "session_start.py"), "w") as f:
+                f.write("print('pinned')\n")
+            with open(os.path.join(clone, "data", "misses.json"), "w") as f:
+                f.write("{}")
+            os.environ["SKYNE_DIR"] = clone
+            if find_claude_audit(elsewhere) != os.path.abspath(clone):
+                fails.append("must find the brain repo through $SKYNE_DIR when cwd cannot reach it")
+            # 6. a $SKYNE_DIR that fails the marker test is ignored, not trusted
+            os.environ["SKYNE_DIR"] = elsewhere
+            if find_claude_audit(elsewhere) is not None:
+                fails.append("a $SKYNE_DIR without both marker files must be ignored")
+            os.environ["SKYNE_DIR"] = os.path.join(elsewhere, "does-not-exist")
+            if find_claude_audit(clone) != clone:
+                fails.append("a missing $SKYNE_DIR must fall back to the cwd search")
+    finally:
+        if saved is None:
+            os.environ.pop("SKYNE_DIR", None)
+        else:
+            os.environ["SKYNE_DIR"] = saved
+
     if fails:
         for f in fails:
             print("SELF-TEST FAIL:", f)
         return 1
-    print("self-test: 8 cases passed")
+    print("self-test: 12 cases passed")
     return 0
 
 
@@ -239,7 +288,7 @@ def main():
         print(brief())
     except Exception as e:  # never fail a session start
         print("=== load-house-rules plugin · SessionStart ===")
-        print("LOAD THE RULES ANYWAY: Skill('house-rules').")
+        print(f"LOAD THE RULES ANYWAY: {LOAD_SKILL} — {NOT_THE_COPY}.")
         print(f"(session_start.py nudge degraded: {type(e).__name__}: {e})")
     sys.exit(0)
 
