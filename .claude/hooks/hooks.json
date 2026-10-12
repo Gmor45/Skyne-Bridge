@@ -96,6 +96,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/solved_guard.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "P=python3; $P -c 'import json' 2>/dev/null || P=python; $P \"${CLAUDE_PLUGIN_ROOT}/hooks/root_doc_gate.py\"",
+            "timeout": 10
           }
         ]
       },
