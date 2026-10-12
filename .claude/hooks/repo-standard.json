@@ -1,5 +1,5 @@
 {
-  "_readme": "The base standard every repo in this estate is built to. Garrett asked for it on 2026-09-11, in these words: 'How do I know you've been using best practices to design github repos and python scripts? Copilot found improvements when I asked. Is there a standard you're using as a base?' The honest answer at the time was NO -- there was no written standard, and sessions pattern-matched whatever the repo in front of them already did. That is exactly why an outside tool asked once found things nobody here had: it applied a general standard, and this estate had none to apply. EVERY RULE HERE IS DERIVED FROM A MEASURED FAILURE, never from a generic checklist. The 'found' field names who caught it and when, so a rule can be argued with rather than obeyed. A rule with checkable=true is scored by scripts/check_estate_hygiene.py; a rule with checkable=false is a convention with no mechanism (house-rules 21's weakest tier) and is listed as such rather than pretended to be enforced.",
+  "_readme": "The base standard every repo in this estate is built to. Garrett asked for it on 2026-09-11, in these words: 'How do I know you've been using best practices to design github repos and python scripts? Copilot found improvements when I asked. Is there a standard you're using as a base?' The honest answer at the time was NO -- there was no written standard, and sessions pattern-matched whatever the repo in front of them already did. That is exactly why an outside tool asked once found things nobody here had: it applied a general standard, and this estate had none to apply. EVERY RULE HERE IS DERIVED FROM A MEASURED FAILURE, never from a generic checklist. The 'found' field names who caught it and when, so a rule can be argued with rather than obeyed. A rule with checkable=true is scored by scripts/check_estate_hygiene.py; a rule with checkable=false is a convention with no mechanism (house-rules 21's weakest tier) and is listed as such rather than pretended to be enforced. CORRECTED 2026-09-11, same day, after Garrett asked 'What source did you pull from?' The answer was: nothing external. Every rule came from a failure this estate had already had, which makes each one defensible and the SET structurally blind -- a scar list can never warn about a failure not yet suffered, which is exactly the category an outside tool found. So every rule now declares `source`: 'scar' (we bled for it) or 'external' (a recognised standard says so, and we had not asked). A standard with only scars is a postmortem file wearing a standard's clothes.",
   "_fields": {
     "id": "stable slug, referenced by the checker and the hook",
     "rule": "what to do, in one line",
@@ -8,7 +8,8 @@
     "checkable": "true if a script scores it today; false means convention only",
     "checker": "what scores it, when checkable"
   },
-  "version": "1.0.0",
+  "_siblingOf": "data/prior-art.json",
+  "version": "3.3.0",
   "rules": [
     {
       "id": "pr-gate",
@@ -16,15 +17,24 @@
       "why": "Without it, code lands unreviewed by any machine. Nothing else on this list matters if nothing ever runs.",
       "found": "Estate sweep 2026-09-11: 5 of 10 non-empty repos had no pull_request trigger at all, and 4 ran no automated check of any kind.",
       "checkable": true,
-      "checker": "check_estate_hygiene.py: pr_gate"
+      "checker": "check_estate_hygiene.py: pr_gate",
+      "source": "scar",
+      "tier": "must",
+      "tier_by_kind": {
+        "vault": "should"
+      },
+      "axis": "automation"
     },
     {
       "id": "pr-not-push",
-      "rule": "A workflow triggers on pull_request. It does NOT also trigger on push to the default branch, unless it genuinely must run post-merge (a deploy, a publish).",
+      "rule": "A workflow triggers on pull_request. It does NOT also trigger on push to the default branch, unless it genuinely must run post-merge (a deploy, a publish). EXCEPTION: in a repo where changes routinely land on the default branch WITHOUT a pull request, the push trigger is not a duplicate -- it is the only check that sees them.",
       "why": "A change checked on its PR and again on the merge is billed twice for one answer, and GitHub rounds every job up to a whole minute with a one-minute floor -- so a 10-second check still costs a full minute each time. House-rules 1's cost table.",
-      "found": "Garrett, 2026-09-11: 'I thought we just did a whole thing about account best practices to save money on actions'. Claude had written push+pull_request into all THREE workflows added that day, having read the opposite convention in Skyne's own ci.yml about an hour earlier. Classic knew-didn't-connect, the miss ledger's largest category.",
+      "found": "Garrett, 2026-09-11: 'I thought we just did a whole thing about account best practices to save money on actions'. Claude had written push+pull_request into all THREE workflows added that day, having read the opposite convention in Skyne's own ci.yml about an hour earlier. Classic knew-didn't-connect, the miss ledger's largest category. THE EXCEPTION WAS FOUND BEFORE IT COST ANYTHING, same day: applying this rule to Gartera-Vault would have removed a push trigger there, and measuring first showed 17 of its last 30 commits landed directly (Obsidian's git backup and several AI surfaces commit straight to main). Deleting that trigger would have removed coverage of the MAJORITY of that repo's changes while claiming to save money. The checker now measures the ratio and exempts such a repo.",
       "checkable": true,
-      "checker": "check_estate_hygiene.py: push_to_default_trigger"
+      "checker": "check_estate_hygiene.py: push_to_default_trigger, gated by lands_directly_on_default()",
+      "source": "scar",
+      "tier": "should",
+      "axis": "automation"
     },
     {
       "id": "selftest-is-run",
@@ -32,7 +42,10 @@
       "why": "A check built and never triggered reads as coverage and is none. House-rules 21 at repo scale.",
       "found": "Estate sweep 2026-09-11: Skyne-Hearth's check_roles.py and both of Skyne-Quest's checkers each carried a working --self-test that nothing had ever executed.",
       "checkable": true,
-      "checker": "check_estate_hygiene.py: unrun_selftest"
+      "checker": "check_estate_hygiene.py: unrun_selftest",
+      "source": "scar",
+      "tier": "must",
+      "axis": "automation"
     },
     {
       "id": "every-language-checked",
@@ -40,7 +53,13 @@
       "why": "A repo with a checked Python half and an unchecked JavaScript half reads as covered. The unchecked half is where the surprise lives.",
       "found": "Copilot, 2026-09-10, in Gartera-Vault: a whole TypeScript package that no workflow triggered on and that the existing tests only read as text, never compiled. Re-found by the 2026-09-11 sweep in claude-usage-hud: 103,088 characters of inline JavaScript and four PowerShell scripts, none checked by anything.",
       "checkable": true,
-      "checker": "check_estate_hygiene.py: uncovered_languages"
+      "checker": "check_estate_hygiene.py: uncovered_languages",
+      "source": "scar",
+      "tier": "must",
+      "tier_by_kind": {
+        "vault": "should"
+      },
+      "axis": "automation"
     },
     {
       "id": "standard-files",
@@ -48,7 +67,28 @@
       "why": "Ordinary furniture that costs nothing and is missing everywhere. Without a licence nobody may legally reuse the code -- including Garrett at work, which is the whole point of the work-install packager.",
       "found": "Copilot, 2026-09-10, added all of these to Skyne where none existed. The 2026-09-11 sweep then found them present in exactly 1 of 10 repos, and found Skyne-Bridge -- the only PUBLIC repo, whose entire job is to be installed by other surfaces -- carrying no licence at all.",
       "checkable": true,
-      "checker": "check_estate_hygiene.py: missing_standard_files"
+      "checker": "check_estate_hygiene.py: missing_standard_files",
+      "source": "scar",
+      "tier": "should",
+      "tier_by_kind": {
+        "plugin": "must"
+      },
+      "axis": "hygiene"
+    },
+    {
+      "id": "no-loose-root-docs",
+      "rule": "No doc files at the repo root beyond the standard ones (README, LICENSE, CHANGELOG, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CLAUDE.md, AGENTS.md, Thread.md). Reports, handoffs, plans and notes live in a folder.",
+      "why": "The standard said what a repo must carry and never what it must not. With nothing flagging extras, Skyne's root grew 366 dated session reports (3.5 MB) before anyone looked, and every session that listed the root paid for it.",
+      "found": "Garrett, 2026-10-12: \"the handoffs are a mess... I don't like loose docs outside of like README, gitignore, and the standard ones you'd find on the home page.\" Fixed in Skyne the same day by moving them to handoffs/.",
+      "checkable": true,
+      "checker": "check_estate_hygiene.py: loose_root_docs",
+      "source": "scar",
+      "tier": "should",
+      "tier_by_kind": {
+        "brain": "must",
+        "vault": "convention"
+      },
+      "axis": "hygiene"
     },
     {
       "id": "no-machine-paths",
@@ -56,7 +96,10 @@
       "why": "Code pinned to one machine runs only there, and nobody notices because it works for whoever wrote it.",
       "found": "Estate sweep 2026-09-11, Skyne-Quest: dummy/check_dummy.py and brand/check_family.py each hardcoded an absolute browser path that exists only inside a Claude cloud container -- and hardcoded DIFFERENT ones, which is the tell that neither had ever run anywhere else, including on Garrett's own desktop.",
       "checkable": true,
-      "checker": "check_estate_hygiene.py: machine_paths"
+      "checker": "check_estate_hygiene.py: machine_paths",
+      "source": "scar",
+      "tier": "must",
+      "axis": "hygiene"
     },
     {
       "id": "duplicated-filters-match",
@@ -64,7 +107,10 @@
       "why": "GitHub rejects YAML anchors in triggers, so the lists must be duplicated -- and one side can then quietly stop covering a file the other still does.",
       "found": "Copilot, 2026-09-10, in Gartera-Vault: turned the prose warning into tests/test_ci_path_filters.py, and wrote it so a parser matching NOTHING fails rather than passes.",
       "checkable": false,
-      "checker": "per-repo test; not scored centrally because the filter lists are repo-specific"
+      "checker": "per-repo test; not scored centrally because the filter lists are repo-specific",
+      "source": "scar",
+      "tier": "convention",
+      "axis": "automation"
     },
     {
       "id": "check-can-fail",
@@ -72,7 +118,198 @@
       "why": "An assertion that looked for something wrong, looked at nothing, and found nothing wrong is indistinguishable from a healthy repo.",
       "found": "Long-standing estate doctrine (house-rules 6c), restated here because it is part of the base standard rather than a Skyne-only habit. Confirmed live 2026-09-11: check_estate_hygiene.py's own first three drafts over-reported by 75, 30 and 11 and were only caught by planted cases.",
       "checkable": false,
-      "checker": "mutation_gate.py scores this for Skyne's own scripts; not scored for sibling repos"
+      "checker": "mutation_gate.py scores this for Skyne's own scripts; not scored for sibling repos",
+      "source": "scar",
+      "tier": "convention",
+      "axis": "self-correction"
+    },
+    {
+      "id": "least-privilege-permissions",
+      "rule": "Every workflow declares a `permissions:` block. Default to `contents: read` and widen only where the job provably needs more.",
+      "why": "Without the block a workflow receives whatever the repository hands out by default, which can include write access to the repo it never uses. The cost of the line is nothing; the cost of not having it is that a compromised step can do more than it should.",
+      "found": "OpenSSF Scorecard's Token-Permissions probe, run against this estate for the first time on 2026-09-11 because Garrett asked what external source the standard used. 7 of 15 workflows had no block at all.",
+      "checkable": true,
+      "checker": "check_estate_hygiene.py: workflows_without_permissions",
+      "source": "external",
+      "tier": "must",
+      "axis": "automation"
+    },
+    {
+      "id": "current-action-versions",
+      "rule": "Actions run a current major version, and the estate does not split across majors for the same action.",
+      "why": "An old major stops receiving fixes and is eventually refused by the runner. A split estate is worse than a uniformly old one: it means somebody upgraded once and the rest never followed, so nobody can tell which is intended.",
+      "found": "Measured 2026-09-11 while answering the external-source question: Gartera-Vault runs v7 of checkout/setup-python/setup-node; the other five repos run v4/v5. Three of those five are workflows Claude wrote THAT DAY, having copied the older pattern from a sibling rather than checking what the estate's most-maintained repo used.",
+      "checkable": true,
+      "checker": "check_estate_hygiene.py: stale_action_versions",
+      "source": "external",
+      "tier": "should",
+      "axis": "automation"
+    },
+    {
+      "id": "pinned-actions",
+      "rule": "A THIRD-PARTY action is pinned to a full commit id, never to a moveable label. An action owned by GitHub itself may use a major-version label.",
+      "why": "A label like @v4 means 'whatever that label points at today', and whoever controls it can repoint it. This is a real and exercised supply-chain attack against third-party actions.",
+      "found": "OpenSSF Scorecard's Pinned-Dependencies probe, 2026-09-11. It reported 41 of 41 uses unpinned -- and measuring WHICH actions corrected the severity: every one is `actions/*`, GitHub's own. Claude had called this the more serious of two findings before measuring; that was wrong and is recorded rather than quietly amended. With no automated dependency updates in this estate, pinning GitHub's own actions to a commit would freeze them forever, which trades a small risk for a certain one.",
+      "checkable": true,
+      "checker": "check_estate_hygiene.py: unpinned_third_party_actions (third-party only, deliberately -- a checker that flagged all 41 would be ignored)",
+      "source": "external",
+      "tier": "must",
+      "axis": "automation"
+    },
+    {
+      "id": "cancel-superseded-runs",
+      "rule": "A workflow that fires on `pull_request` carries a `concurrency` group keyed on the PR, with `cancel-in-progress: true`. EXCEPTION: a deploy or publish is never cancelled mid-run.",
+      "why": "A pull_request workflow re-runs on every push to that PR. Without this, the earlier run finishes and is billed in full even though the commit it is checking has already been replaced -- an answer nobody will read. GitHub also rounds every job up to a whole minute, so each superseded run costs at least a minute it need not. The deploy exception is a correctness line, not a courtesy: cancelling a publish halfway can leave the published thing in a state neither version intended.",
+      "found": "Garrett, 2026-09-15: 'how do I modify claude's behavior in a structural way to keep minutes down? Because an alarm that I dont look at doesnt work.' Measured the same hour in Skyne: 98 of the last 100 workflow runs were `ci` on `pull_request`, and 15 of them landed on ONE branch, 13 on another -- a session pushing several small commits to one open PR, each push rerunning the whole suite from scratch. At ~5.5 minutes a run that is over an hour of billed minutes on a single branch. Skyne-Exceed showed the same shape smaller (7 on one branch). The point of the rule over the fix: both repos were fixed by hand that day, and nothing would have caught the third repo, or either of these two drifting back.",
+      "checkable": true,
+      "checker": "check_estate_hygiene.py: no_cancel_on_superseded, deploys excluded via DEPLOY_HINTS",
+      "source": "scar",
+      "tier": "should",
+      "axis": "automation"
+    },
+    {
+      "id": "workflows-parse",
+      "rule": "Every committed workflow file is parseable YAML that GitHub would actually run.",
+      "why": "GitHub does not fail loudly on a workflow it cannot parse -- it simply never runs it. A repo then carries a PR gate that has never executed once, and every downstream check that asks 'is there a pull_request trigger' answers yes by reading text that Actions itself ignores.",
+      "found": "Claude, 2026-09-18, while fixing an unrelated crash in check_estate_hygiene.py. Skyne-Exceed/.github/workflows/ci.yml was committed as a single 2,880-character BASE64 BLOB -- a session had written the encoded string to the file instead of decoding it first. The workflow it decodes to is correct and was authored on 2026-09-15; it had never run. The estate's own sweeper could not see it because the same session left a second base64 artefact whose ~1,400-character filename crashed the sweeper on OSError before it ever scored that repo. Scanned the other ten repos the same day: this was the only one.",
+      "checkable": true,
+      "checker": "govern.py: workflows_parse",
+      "source": "scar",
+      "tier": "must",
+      "axis": "automation"
+    },
+    {
+      "id": "dangerous-workflow",
+      "rule": "No workflow interpolates untrusted input into a shell block, and none combines pull_request_target with a checkout of the PR's own head.",
+      "why": "Both are remote code execution on the runner, with the repo's token in scope. OpenSSF Scorecard rates this Critical -- its highest -- and it is the one Scorecard check with no representation anywhere in this estate's rules.",
+      "found": "MEASURED CLEAN, 2026-09-18, and recorded as clean rather than as a finding: 0 findings across 160 shell blocks in 30 workflows in eleven repos -- no pull_request_target checking out a PR head, no untrusted interpolation. THE FIRST MATCHER WAS BROKEN AND ALSO SAID ZERO: `^\\s*run:` never matches `      - run: |`, because the dash sits between the indent and the key. It was caught only because the self-test plants a fault and requires the check to catch it (house-rules 6c) -- a checker that matches nothing is indistinguishable from a clean repo. The clean number above is the one from the fixed matcher. This rule is a TRIPWIRE on a currently-good state, not a backlog item; it is here because a scar list can only warn about failures already suffered, which this register's own _readme says of itself.",
+      "checkable": true,
+      "checker": "govern.py: dangerous_workflow",
+      "source": "external",
+      "tier": "must",
+      "axis": "automation"
+    },
+    {
+      "id": "repo-instruction-file",
+      "rule": "Every repo carries a CLAUDE.md (or AGENTS.md) at its root.",
+      "why": "A session landing in a repo with no instruction file inherits nothing: not the branch rule, not the commit signature, not what the repo is for. House-rules reaches every surface, but the repo-specific half does not exist until this file does.",
+      "found": "Estate sweep 2026-09-18: 8 of 11 repos carry one. Skyne-Bridge, Skyne-Hearth and Skyne-Quest carry none -- and Skyne-Bridge is the repo that holds every Claude Code hook in the estate.",
+      "checkable": true,
+      "checker": "govern.py: instruction_file",
+      "source": "scar",
+      "tier": "must",
+      "axis": "instruction"
+    },
+    {
+      "id": "governance-stamp",
+      "rule": "Every repo carries a .governance.json naming its kind, the standard version it was last brought to, and its must-finding ratchet.",
+      "why": "This is the propagation mechanism itself. Garrett, 2026-09-18: 'There also needs to be a mechanism of updating other repos when the standards are adjusted.' A stamp is deliberately NOT a copy of the rules: a copy drifts silently and partially, a version number drifts loudly and totally.",
+      "found": "Measured 2026-09-18: repo-standard.json is at v2.1.0 in Skyne and at v1.0.0 in BOTH of its copies (Skyne-Bridge, skynegate) -- four rules and a whole schema field behind, with nothing comparing them. The copy-the-rules approach was already tried here and had already failed; that is why this rule stamps a version instead.",
+      "checkable": true,
+      "checker": "govern.py: stamp_present, stamp_current",
+      "source": "external",
+      "tier": "must",
+      "axis": "governance"
+    },
+    {
+      "id": "resolvable-action-refs",
+      "rule": "Every `uses:` names a ref GitHub can actually resolve — a vN tag, a bare semver, a full 40-character commit id, or a branch.",
+      "why": "An unresolvable ref does not fail a test; it kills the job before any step runs, in zero seconds. The failure names the action rather than the repo, so it reads as GitHub being broken.",
+      "found": "Claude, 2026-09-18, an hour after shipping this layer and from a real failure it did not catch. Skyne-Exceed's ci.yml named `actions/checkout@4` -- no `v` -- and the first run of that workflow ever died with 'Unable to resolve action'. NOTHING here saw it: `stale_action_versions` matches `@vN`, so a ref without a `v` never matched its pattern and read as clean. That is the same 'a checker whose pattern misses the input looks exactly like a clean repo' shape as this file's own dangerous-workflow matcher, found the same day. Re-measured estate-wide after the fix: 0 of 72 references -- a TRIPWIRE on a clean state, not a backlog.",
+      "checkable": true,
+      "checker": "govern.py: unresolvable_action_refs",
+      "source": "scar",
+      "tier": "must",
+      "axis": "automation"
+    },
+    {
+      "id": "design-source-pointer",
+      "rule": "CLAUDE.md or AGENTS.md names a real, existing file recording how this repo's surfaces are designed -- a DESIGN.md, a design-system doc, a design philosophy -- as a backtick-quoted path a session can open, not a mention in prose.",
+      "why": "Garrett, 2026-09-18, naming the whole missing axis in one question: 'Is there a reason you didn't add design as part of it? Or like the pin system or stuff like that.' Skyne itself HOLDS a design record (`.claude/skills/house-rules/DESIGN.md`) and its own CLAUDE.md never names it -- a session landing in the estate's own brain is not routed to its own design source.",
+      "found": "Measured 2026-09-19 with the checker this rule ships, against the 5 of 11 repos this session had checked out (see `2026-09-19-...phase-1...md` for the full run): Gartera-Vault names `Vault Ops/Dashboard Design Philosophy.md` in backticks and passes; Skyne, Skyne-Exceed, cloudflare-deploy and Tangle do not point at any design file by a real path, though Skyne holds one and Skyne's CLAUDE.md never says so.",
+      "checkable": true,
+      "checker": "govern.py: design_source_pointer",
+      "source": "scar",
+      "tier": "should",
+      "axis": "design"
+    },
+    {
+      "id": "decision-recording",
+      "rule": "CLAUDE.md or AGENTS.md names a real, existing register of decisions, rulings or canon, as a backtick-quoted path a session can open.",
+      "why": "A settled question with no findable record gets re-litigated by the next session, because no session here can see another one's conversation -- the failure `DECISIONS.md` and the vault's Canon Log both exist to stop, restated as a rule of the standard rather than left as a habit two repos happen to share.",
+      "found": "Measured 2026-09-19, against the 5 of 11 repos checked out this session: Skyne names `.claude/skills/house-rules/DECISIONS.md` and Skyne-Exceed names its own equivalent, both in backticks, and pass. Gartera-Vault's Canon Log is real (`Codex/Knowledge/Canon Log.md`) but its own CLAUDE.md never gives the path -- only the name, in prose -- so a repo with a working register still fails this if a session cannot find it from the one file it always loads. cloudflare-deploy and Tangle name no register at all.",
+      "checkable": true,
+      "checker": "govern.py: decision_recording",
+      "source": "scar",
+      "tier": "should",
+      "axis": "knowledge"
+    },
+    {
+      "id": "charter-reach",
+      "rule": "CLAUDE.md or AGENTS.md names a real, existing charter or standard this repo is held to, as a backtick-quoted path a session can open.",
+      "why": "Garrett's own opening example for the whole governance layer was a charter, and the standard that first shipped had no rule about one at all -- the same axis blindness `design-source-pointer` and `decision-recording` answer, applied to the estate's own rulebook.",
+      "found": "Measured 2026-09-19, against the 5 of 11 repos checked out this session: Skyne names `charter/CHARTER.md` in backticks and passes. Gartera-Vault references specific charter articles twice in prose without ever giving a path a session could open; Skyne-Exceed, cloudflare-deploy and Tangle name no charter at all.",
+      "checkable": true,
+      "checker": "govern.py: charter_reach",
+      "source": "scar",
+      "tier": "should",
+      "axis": "knowledge"
     }
-  ]
+  ],
+  "external_sources": {
+    "_why": "The second source, added because the first one could only look backwards. These are consulted for rules we have NOT yet earned the hard way.",
+    "openssf-scorecard": {
+      "what": "The recognised checklist for repository health -- branch protection, pinned dependencies, token permissions, signed releases, review requirements, automated dependency updates, static analysis.",
+      "taken": [
+        "least-privilege-permissions",
+        "current-action-versions",
+        "pinned-actions"
+      ],
+      "deliberately_not_taken": "Branch protection, signed releases, required review and automated dependency updates. All four assume more than one maintainer, and this is a single-owner estate where they would block the owner from his own repos. Stated rather than silently dropped, so a future reader knows they were considered.",
+      "first_run_found": "41 of 41 action uses on a moveable label; permissions declared on only 8 of 15 workflows. Neither had ever failed here, so no scar rule could have contained them."
+    },
+    "github-community-standards": {
+      "what": "GitHub's own per-repo checklist: README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, issue and pull-request templates, SECURITY.",
+      "taken": [
+        "standard-files"
+      ],
+      "deliberately_not_taken": "CODE_OF_CONDUCT and issue templates. A single-owner private estate has nobody to govern and nobody filing issues; adding them would be furniture nobody reads.",
+      "note": "This one AGREES with a rule the scar list already had, which is the useful case: independent arrival at the same rule is evidence it is real rather than local habit."
+    }
+  },
+  "_tiers": {
+    "_why": "Added 2026-09-18. Until today every rule was equal, so the sweep reported 11 of 11 repos FLAGGED and 0 clean -- a verdict that discriminates nothing is the same defect house-rules 28 names when a count has no denominator. A tier says how much a finding actually matters, so a real regression is visible instead of buried in a backlog of missing CONTRIBUTING.md files.",
+    "must": "A real defect. Counted against the repo's ratchet: the number of open must-findings may FALL and may never RISE. A new one fails by name.",
+    "should": "Tracked debt. Reported every run, never blocks. Most of the estate's standard-files backlog lives here on purpose.",
+    "convention": "No central mechanism exists. Listed as such rather than pretended to be enforced -- house-rules 21's weakest tier, stated rather than dressed up.",
+    "_not_a_zero_gate": "A hard gate at zero would fire on pre-existing debt rather than on the failure, which house-rules 21 point 5 forbids and which script_size_ratchet.py and check_mutation_coverage.py already both refused to do. The ratchet is the estate's own proven shape for exactly this."
+  },
+  "_kinds": {
+    "_why": "A repo's kind decides which rules bind it. Before this, an Obsidian wedding-planning vault with no code was scored by the same list as a shipped tool, so its findings were noise and were correctly ignored -- which is how a rule stops meaning anything.",
+    "brain": "The governance and record repo. Skyne.",
+    "tool": "Shipped software with its own users or its own surface.",
+    "plugin": "A distribution surface other repos install from. PUBLIC, so licence and security policy are not optional.",
+    "infra": "Holds credentials and dispatches work. Small, high blast radius.",
+    "vault": "Obsidian content. Prose, not code; a human and several AI surfaces commit here directly."
+  },
+  "_axes": {
+    "_why": "What KIND of thing a rule governs. Added 2026-09-19 after Garrett asked why design and the pin system were not in this standard and the answer was that they could not be: every rule here routes to check_estate_hygiene.py or govern.py, both of which read only a repo's mechanical configuration. A register that holds one kind of answer cannot notice the kinds it cannot hold -- house-rules 22, for at least the fourth recorded time in this estate. data/prior-art.json grew the identical field on 2026-09-03 after the identical failure and carries it on 127 rows; this one carried it on 0. Its vocabulary is deliberately NOT reused: prior-art asks what a thing is a reinvention OF (component / interface), which is a different question.",
+    "_reported_not_gated": "An axis with no rules on it is the finding and is REPORTED, never refused. Gating would fire on a backlog that is the whole point of recording -- house-rules 21 point 5, the same call the must-ratchet already makes.",
+    "vocabulary": {
+      "automation": "workflows, actions, CI triggers, runner permissions",
+      "hygiene": "files that must exist, paths that must not, portability",
+      "instruction": "what a session landing in this repo inherits before it acts",
+      "governance": "this standard's own propagation machinery",
+      "self-correction": "whether this repo's own checks can be seen to fail",
+      "design": "how this repo's surfaces look, and which record rules them",
+      "knowledge": "how a decision, ruling or canon fact is recorded and found"
+    }
+  },
+  "_versioning": {
+    "_why": "Nothing said what a version bump MEANT until 2026-09-19, and the gap had a cost waiting to happen: adding the `axis` field -- a classification that obliges no repo to change anything -- moved 3.1.0 to 3.2.0 and made all eleven repos report BEHIND. Eleven repos told they owe an update for work that does not exist is the crying-wolf shape this estate already rules against: a signal that fires when nothing is wrong is one people learn to ignore, and then it cannot fire when something is.",
+    "major": "A rule tightens, or a new `must` lands. Every repo owes real work.",
+    "minor": "A new rule at `should`/`convention`, or a tier relaxes. Repos owe a re-stamp.",
+    "patch": "Classification, wording, evidence, reasoning. NOTHING is owed.",
+    "_mechanism": "This is CHECKED, not asked for politely: `drift` compares major.minor only, so a patch bump cannot make a repo read BEHIND. That is what keeps the distinction honest -- a convention here would be house-rules 21's weakest rung on the very field whose job is to say when work is owed."
+  }
 }
