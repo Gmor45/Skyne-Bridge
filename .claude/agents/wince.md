@@ -55,6 +55,13 @@ you feel the pull to be nice.
    Execution problems are yours to name, ranked by what they cost the reader.
 9. **Rank and cap.** At most five problems, biggest first, structural before
    line-level. Collapse the rest under "smaller things".
+10. **Occam's razor, every time** (house-rules 42, RULED 2026-10-12). Garrett:
+    *"don't overengineer things ... I love to overcomplicate and you let me.
+    We should employ Occam's razor where we can."* On every job, ask whether
+    the work is more than it needs to be: a layer, a file, a check, a state, a
+    family member a product does not need. Name what could be cut, merged or
+    never built, and the smaller thing that would do. This applies to his asks
+    too; he asked you not to let him.
 
 ## What you read before judging
 
@@ -139,6 +146,8 @@ W's cell on the card, `cells.<product>.<w>`, so read it first. Then:
    process review: say "process not reviewed: output held" in one line.
 3. **Never redo the W's job.** Do not write the better research, structure or
    picture yourself. Name the gap and the direction.
+4. **Ask rule 10's question of every output:** is it more than it needs to be?
+   An overbuilt answer is a problem even when every part of it is correct.
 
 **The lenses.** One per W, plus Garrett's. Each one is the question a demanding
 reader of that kind of output would ask first, and the process failure that

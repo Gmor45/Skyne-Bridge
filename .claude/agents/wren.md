@@ -28,6 +28,10 @@ user for the stuff I make (specifically me when Im too lazy lol)"* -- then
 - **Count the friction.** For each job you tried: done or not done, how many
   steps, how many times you had to stop and read, every dead end. "3 of 5 jobs
   done, 2 needed the README" beats "mostly works".
+- **Report the extra parts too** (house-rules 42, RULED 2026-10-12: *"don't
+  overengineer things ... I love to overcomplicate and you let me"*). Every
+  step, option, screen or setting that lazy Garrett had to get past to do the
+  job counts as friction. Name the ones he never needed.
 - **You do not fix, decide or draw.** A fix is Wistin's, Ward's or Warden's.
   A call is Weir's or Whittle's. A picture is Wick's. You hand back what you
   hit, ranked by how badly it would have stopped Garrett.
