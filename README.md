@@ -180,6 +180,11 @@ skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
   (a subagent re-reads its context, so it costs more than it saves), and a
   blocked message is never routed. A hook cannot start an agent, so this
   names it and the session sends it.
+- **Wince follows every W** — `wince_gate.py` on `Stop` (RULED 2026-10-12).
+  When a Skyne Family W finished a run since Garrett's last message and no
+  Wince run finished after it, the reply is refused once, naming the W, until
+  Wince has critiqued that output. Reads `w_ran.py`'s log first (it sees
+  background runs and orders by finish), the transcript otherwise.
 - **Weir's event trigger** — `weir_gate.py` on `Stop`. A reply that ends on a
   question to Garrett, lays out alternatives, and never says which it would
   pick is refused once (house-rules 10: he wants the call made). It never

@@ -78,10 +78,16 @@ jobs:
           stop = [x.get("command", "") for g in h.get("Stop", []) for x in g.get("hooks", [])]
           if not any("weir_gate.py" in c for c in stop):
               print("weir_gate.py is not registered on Stop"); sys.exit(1)
-          print("w_ran.py registered on both events; weir_gate.py on Stop")
+          # RULED 2026-10-12: Wince follows every W, and the hook is part of
+          # the ruling. Unregistering it must fail here, not go quiet.
+          if not any("wince_gate.py" in c for c in stop):
+              print("wince_gate.py is not registered on Stop"); sys.exit(1)
+          print("w_ran.py registered on both events; weir_gate.py and wince_gate.py on Stop")
           PY
       - name: Weir gate self-test (a menu with no pick)
         run: python3 .claude/hooks/weir_gate.py --self-test
+      - name: Wince gate self-test (Wince follows every W, RULED 2026-10-12)
+        run: python3 .claude/hooks/wince_gate.py --self-test
       - name: W router exam corpus and scoring (no model)
         run: python3 .claude/hooks/route_eval.py --self-test
       - name: Turn counter self-test
