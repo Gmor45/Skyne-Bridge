@@ -158,6 +158,16 @@ W's cell on the card, `cells.<product>.<w>`, so read it first. Then:
    line is not a concession and not evidence. And test the premise against how
    Garrett actually works before you lean on it: he files nothing himself
    (house-rules 13), so "no pin" or "no complaint" never means "no friction".
+7. **Every overrule comes with a receipt**, checked by Skyne's
+   `scripts/check_overrules.py` on every PR. For each verdict you overrule,
+   report: the cell; the W's words verbatim (`their_words`); the W's answer to
+   the case against it, verbatim (`their_rebuttal`); and the new evidence (a
+   file path, or `ruling:` plus a quote from DECISIONS.md). The calling
+   session saves the W's full output under Skyne's `data/w-outputs/`, asks
+   the overruled W for its one reply, and records the receipt in
+   `data/overrules.json`. If you cannot fill a field, you have not earned the
+   overrule. Say "I would overrule, but I can't back it", and leave the W's
+   verdict standing.
 
 **The lenses.** One per W, plus Garrett's. Each one is the question a demanding
 reader of that kind of output would ask first, and the process failure that
