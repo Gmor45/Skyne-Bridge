@@ -143,7 +143,16 @@ def refusal(ws: list[str], source: str) -> str:
             f"session, say so in one line instead.")
 
 
-def decide(payload: dict, log_rows: list[dict] | None = None) -> dict | None:
+def unbacked_overrules(session: str, since: str, path: str | None = None) -> int:
+    """Overrules Wince made this turn that overrule_gate.py could not back."""
+    p = path or os.environ.get("SKYNE_OVERRULES_LOG") or os.path.join(
+        os.path.expanduser("~"), ".claude", "skyne", "overrules.jsonl")
+    return sum(1 for r in read_jsonl(p) if r.get("status") == "unbacked"
+               and r.get("session_id") == session and str(r.get("utc") or "") >= since)
+
+
+def decide(payload: dict, log_rows: list[dict] | None = None,
+           overrules_path: str | None = None) -> dict | None:
     if payload.get("stop_hook_active"):
         return None
     entries = read_jsonl(str(payload.get("transcript_path") or ""))
@@ -152,6 +161,13 @@ def decide(payload: dict, log_rows: list[dict] | None = None) -> dict | None:
         return None
     since = str(entries[b].get("timestamp") or "")[:19] + "Z"
     session = str(payload.get("session_id") or "")
+    n = unbacked_overrules(session, since, overrules_path) if session and len(since) == 20 else 0
+    if n:
+        return {"decision": "block", "reason":
+                f"Wince overruled {n} verdict(s) this turn without a receipt that holds up "
+                f"(overrule_gate.py logged them as unbacked). Do not pass those verdicts on as "
+                f"Wince's findings: tell Garrett in one line which ones are unbacked, or re-run "
+                f"Wince on the W's full output."}
     rows = read_jsonl(log_path()) if log_rows is None else log_rows
     order = from_log(rows, session, since) if session and len(since) == 20 else []
     source = "w_ran log"
@@ -206,6 +222,9 @@ def self_test() -> int:
     sidechain = dict(call("wince"), isSidechain=True)
 
     with tempfile.TemporaryDirectory() as d:
+        # never read this machine's real overrule log during a self-test
+        os.environ["SKYNE_OVERRULES_LOG"] = os.path.join(d, "no-such-log.jsonl")
+
         def transcript(*entries):
             p = os.path.join(d, "t.jsonl")
             with open(p, "w", encoding="utf-8") as f:
@@ -245,6 +264,21 @@ def self_test() -> int:
         stale = [dict(log[0], utc="2026-10-12T15:59:59Z")]
         check(decide(transcript(user), stale) is None,
               "a W that finished before Garrett's last message is not this turn's")
+
+        # an unbacked overrule logged by overrule_gate.py this turn refuses the reply
+        op = os.path.join(d, "overrules.jsonl")
+        with open(op, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"status": "unbacked", "session_id": "s1",
+                                "utc": "2026-10-12T16:00:07Z"}) + "\n")
+        out = decide(transcript(user, call("wander"), tool_result, call("wince")), [], op)
+        check(bool(out) and "unbacked" in out["reason"],
+              "PLANTED: an unbacked Wince overrule this turn refuses the reply")
+        stale_op = os.path.join(d, "stale.jsonl")
+        with open(stale_op, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"status": "unbacked", "session_id": "s1",
+                                "utc": "2026-10-12T15:59:00Z"}) + "\n")
+        check(decide(transcript(user), [], stale_op) is None,
+              "an unbacked overrule from an earlier turn is not this turn's")
 
         # end to end through stdin, as the harness runs it
         env = dict(os.environ, SKYNE_W_RUNS_LOG=os.path.join(d, "none.jsonl"))
