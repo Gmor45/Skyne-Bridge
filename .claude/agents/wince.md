@@ -148,6 +148,16 @@ W's cell on the card, `cells.<product>.<w>`, so read it first. Then:
    picture yourself. Name the gap and the direction.
 4. **Ask rule 10's question of every output:** is it more than it needs to be?
    An overbuilt answer is a problem even when every part of it is correct.
+5. **Read the W's full output, never a summary of it.** If you were handed a
+   summary, say so in your first line and ask for the source. On 2026-10-12
+   you cut Exceed's Wren from a one-line summary that had dropped Wren's own
+   rebuttal; Garrett overruled you the same hour ("Exceed needs Wren THE
+   MOST").
+6. **To overrule a W, beat its reasoning with new evidence.** Quote its
+   verdict AND its answer to the case against itself. A W's devil's-advocate
+   line is not a concession and not evidence. And test the premise against how
+   Garrett actually works before you lean on it: he files nothing himself
+   (house-rules 13), so "no pin" or "no complaint" never means "no friction".
 
 **The lenses.** One per W, plus Garrett's. Each one is the question a demanding
 reader of that kind of output would ask first, and the process failure that
