@@ -78,10 +78,29 @@ jobs:
           stop = [x.get("command", "") for g in h.get("Stop", []) for x in g.get("hooks", [])]
           if not any("weir_gate.py" in c for c in stop):
               print("weir_gate.py is not registered on Stop"); sys.exit(1)
-          print("w_ran.py registered on both events; weir_gate.py on Stop")
+          # RULED 2026-10-12: Wince follows every W, and the hook is part of
+          # the ruling. Unregistering it must fail here, not go quiet.
+          if not any("wince_gate.py" in c for c in stop):
+              print("wince_gate.py is not registered on Stop"); sys.exit(1)
+          # 2026-10-12: Garrett, "how is that rule ENFORCED". Wince's overrule
+          # receipts are checked when Wince stops, not by anyone remembering.
+          sub = [x.get("command", "") for g in h.get("SubagentStop", []) for x in g.get("hooks", [])]
+          if not any("overrule_gate.py" in c for c in sub):
+              print("overrule_gate.py is not registered on SubagentStop"); sys.exit(1)
+          # 2026-10-12: "youre not doing the core thing of skyne" -- a callout
+          # must end in a filed miss, by hook, not by memory.
+          if not any("miss_gate.py" in c for c in stop):
+              print("miss_gate.py is not registered on Stop"); sys.exit(1)
+          print("w_ran.py on both events; weir_gate, wince_gate, miss_gate on Stop; overrule_gate on SubagentStop")
           PY
       - name: Weir gate self-test (a menu with no pick)
         run: python3 .claude/hooks/weir_gate.py --self-test
+      - name: Wince gate self-test (Wince follows every W, RULED 2026-10-12)
+        run: python3 .claude/hooks/wince_gate.py --self-test
+      - name: Overrule gate self-test (no overrule without a real receipt)
+        run: python3 .claude/hooks/overrule_gate.py --self-test
+      - name: Miss gate self-test (a callout ends in a filed miss)
+        run: python3 .claude/hooks/miss_gate.py --self-test
       - name: W router exam corpus and scoring (no model)
         run: python3 .claude/hooks/route_eval.py --self-test
       - name: Root-doc gate self-test (no new loose docs at a repo root)
