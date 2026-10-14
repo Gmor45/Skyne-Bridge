@@ -41,7 +41,7 @@ when a Wince run FINISHED in this session after the last command naming
 Finished means: a synchronous Agent call whose result came back, or a `stop`
 row in w_ran.py's log -- so a Wince still running in the background is never
 owed yet. A Wince run that was not a graded pass (a prose critique, say) is
-let through once the reply says "no grade to file:" followed by the reason.
+let through once the reply has a line starting "no grade to file:" and a reason.
 
 WHAT IT DOES NOT DO (house-rules 21 point 5)
 --------------------------------------------
@@ -173,10 +173,12 @@ def refusal(ws: list[str], source: str) -> str:
 
 
 FILER = "wince_grades"            # Skyne's register writer, in any invocation
-# The stated escape: "no grade to file:" and a reason. The colon keeps prose
-# ABOUT the phrase from counting, and the reason must be real text -- the
-# refusal's own placeholder "<why>", quoted back, is not one (Wince, pass 2).
-NO_GRADE = re.compile(r"no grade to file:\s*(?!<why>)[^\s\"'<>]", re.I)
+# The stated escape: a LINE that starts "no grade to file:" and gives a reason.
+# Starting its own line is what tells using the escape from describing it --
+# prose, a quoted refusal or a code block that mentions it mid-line does not
+# count (Wince, passes 2 and 3). The reason must be real text: the refusal's
+# own placeholder "<why>" is not one.
+NO_GRADE = re.compile(r"^[ \t>*_-]*no grade to file:[ \t]*[^\s\"'<>]", re.I | re.M)
 SHELLS = ("Bash", "PowerShell")
 
 
@@ -432,7 +434,12 @@ def self_test() -> int:
               "a script that imports the register's writer counts as filing")
         check(decide(transcript(*graded, said('the hook wants "no grade to file" said')), []) is not None,
               "PLANTED: prose that only MENTIONS the phrase (no colon) does not count as the escape")
-        check(decide(transcript(*graded, said("Wince read prose. No grade to file: it was a critique.")), []) is None,
+        check(decide(transcript(*graded, said(
+            "I would write no grade to file: and the reason, but this was graded")), []) is not None,
+              "PLANTED: describing the escape mid-sentence is not using it")
+        check(decide(transcript(*graded, said("```say no grade to file: reason here```")), [])
+              is not None, "PLANTED: a code span quoting the escape is not using it")
+        check(decide(transcript(*graded, said("Wince read prose.\nNo grade to file: it was a critique.")), []) is None,
               "a Wince run that was not a graded pass is let through when the reply says so")
         quoted = decide(transcript(*graded), [])["reason"]
         check(decide(transcript(*graded, said(f"The hook said: {quoted}")), []) is not None,
