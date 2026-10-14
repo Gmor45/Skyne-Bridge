@@ -124,7 +124,7 @@ is stated rather than hidden — rule 21 point 5.
 It fails open on every error path — no stdin, no transcript path, an unwritable
 state directory, a half-written line — so it can never trap a session.
 
-## It also carries a mechanical-task reminder and a Haiku subagent
+## It also carries a Haiku subagent
 
 Garrett asked (2026-09-05) for a way to route mechanical work — moving files,
 running a script, formatting, applying an already-decided edit, sweeping one
@@ -223,29 +223,6 @@ python3 .claude/hooks/tier_gate.py --self-test          # 41 checks
 python3 .claude/hooks/tier_gate.py --grade "some prompt text"
 SKYNE_TIER_GATE=warn   # or off — say the tier instead of holding the message
 ```
-
-**`.claude/hooks/delegate_reminder.py`**, a `UserPromptSubmit` hook. On every
-prompt it scans for rule 2's own mechanical tells (a fixed phrase list lifted
-verbatim from the rule, not a guessed vocabulary) and, on a hit, adds one line
-of context naming the subagent as an option — suppressed if the same prompt
-also carries one of rule 2's "up" tells (architecture, design, 3+ conflicting
-constraints), and shown once per session so it nags nobody.
-
-```bash
-python3 .claude/hooks/delegate_reminder.py --self-test              # 17 checks
-python3 .claude/hooks/delegate_reminder.py --check "some prompt text"
-```
-
-**What this is not.** It is a reminder, never a router. Nothing here decides
-FOR Claude Code to delegate — that call is still made in the turn that reads
-the reminder, same as rule 2a always was. And the match is a keyword scan, not
-semantic understanding: it will miss a mechanical-shaped prompt phrased
-differently, and it will occasionally fire on a prompt that only mentions one
-of these words in passing. Both are named here rather than hidden — rule 21
-point 5 — and the fix for either is a matched case added to the self-test, not
-a claim that it got smarter.
-
-It fails open on every error path, exactly like the two hooks above it.
 
 ## And it refuses a push to main
 
