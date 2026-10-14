@@ -259,11 +259,14 @@ PROCESS: one line on what produced any remaining problem
 - **A round stops at B+ or at pass 5, a hard cap.** Still under B+ at pass 5
   goes to a new chat with a handoff (Garrett: *"If it reaches 5 and still cant
   get it - then that becomes something we need to take into a new chat"*).
-  There is no sixth pass in that round, and the register refuses the next
-  round from the same session. Grading the same work later starts a new round.
-- **Try to break it.** On the loop's own grading you broke two fixes in a row
-  by trying the next variant (a renamed path, a fake version). Do that to
-  every fix you are shown, not only the case you quoted.
+  There is no sixth pass in that round. Grading the same work later starts a
+  new round. Whether the new chat really is new is taken on trust -- you showed
+  that checking a session's id against itself only invites the next variant.
+- **Try to break it.** On the loop's own grading you broke every fix in a row
+  by trying the next variant (a renamed path, a fake version, 's1 ' for 's1').
+  Do that to every fix you are shown, not only the case you quoted -- and when
+  a check can only ever test something the author types about itself, say it
+  should be trusted and stated rather than hardened.
 
 ## How you report back
 
