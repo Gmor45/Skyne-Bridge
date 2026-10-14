@@ -40,13 +40,16 @@ that ran `wince_grades` (any form: `wince_grades.py add`, or a script that
 imports it). Finished means: a synchronous Agent call whose result came back,
 or a `stop` row in w_ran.py's log -- so a Wince still running in the
 background is never owed yet. A Wince run that was not a graded pass (a prose
-critique, say) is let through when the reply says "no grade to file" and why.
+critique, say) is let through once the reply says "no grade to file: <why>".
 
 WHAT IT DOES NOT DO (house-rules 21 point 5)
 --------------------------------------------
-- It sees that the register's writer RAN after the grade, never that the row
-  it wrote is this grade, or is right. Like the register itself, what a
-  session types about its own work is trusted.
+- It sees the register writer's NAME in a shell command after the grade --
+  not that the command ran, succeeded, or wrote this grade. A `cat` of the
+  script, or an `add` the register refused, reads as filed. And one filing
+  covers every grade before it (a single script often records several), so
+  two grades and one filing pass. Like the register itself, what a session
+  types about its own work is trusted.
 - A W run as a generic agent (a session without Bridge's plugin has no W agent
   types) is invisible to both sources. Bridge's agent files and every product's
   family pointer tell the session to say so rather than pretend.
@@ -159,7 +162,8 @@ def refusal(ws: list[str], source: str) -> str:
 
 
 FILER = "wince_grades"            # Skyne's register writer, in any invocation
-NO_GRADE = "no grade to file"     # the stated escape for a critique with no grade
+NO_GRADE = "no grade to file:"    # the stated escape: "no grade to file: <why>". The colon
+                                  # keeps prose ABOUT the phrase from counting as using it.
 SHELLS = ("Bash", "PowerShell")
 
 
@@ -169,11 +173,19 @@ def _ts(s) -> str:
 
 
 def wince_finishes(entries: list[dict], rows: list[dict], session: str) -> list[str]:
-    """When each Wince run in this session FINISHED, from either source."""
-    out = [_ts(r.get("utc")) for r in rows
-           if r.get("event") == "stop" and r.get("w") == CRITIC
-           and r.get("session_id") == session]
-    calls = set()
+    """When each Wince run in this session FINISHED. The log when it has rows
+    for this session, else the transcript -- the same precedence as the
+    W-follow check, so one run is never counted twice (Wince, hook pass 1)."""
+    # One row per agent_id: on the work laptop w_ran.py is registered twice
+    # (plugin and personal copy), so every event lands twice -- measured
+    # 2026-10-14 on this very session's log.
+    logged = {r.get("agent_id") or (r.get("utc"), i): _ts(r.get("utc"))
+              for i, r in enumerate(rows)
+              if r.get("event") == "stop" and r.get("w") == CRITIC
+              and r.get("session_id") == session}
+    if logged:
+        return [t for t in logged.values() if t]
+    out, calls = [], set()
     for e in entries:
         if e.get("type") == "assistant" and not e.get("isSidechain"):
             for blk in (e.get("message") or {}).get("content") or []:
@@ -190,33 +202,31 @@ def wince_finishes(entries: list[dict], rows: list[dict], session: str) -> list[
     return [t for t in out if t]
 
 
-def last_filing(entries: list[dict]) -> str:
-    """When a shell command last ran the register's writer ('' if never)."""
+def last_accounted(entries: list[dict]) -> str:
+    """The last moment every finished grade so far was accounted for: a shell
+    command naming the register's writer, OR the main loop saying "no grade
+    to file". Both move the same watermark, so an escape said once is not
+    asked for again every later turn, and an escape said BEFORE a Wince run
+    does not cover it (Wince, hook pass 1). '' if never."""
     last = ""
     for e in entries:
         if e.get("type") != "assistant" or e.get("isSidechain"):
             continue
         for blk in (e.get("message") or {}).get("content") or []:
-            if (isinstance(blk, dict) and blk.get("type") == "tool_use"
-                    and blk.get("name") in SHELLS
-                    and FILER in str((blk.get("input") or {}).get("command") or "")):
+            if not isinstance(blk, dict):
+                continue
+            filed = (blk.get("type") == "tool_use" and blk.get("name") in SHELLS
+                     and FILER in str((blk.get("input") or {}).get("command") or ""))
+            escaped = (blk.get("type") == "text"
+                       and NO_GRADE in str(blk.get("text") or "").lower())
+            if filed or escaped:
                 last = max(last, _ts(e.get("timestamp")))
     return last
 
 
-def says_no_grade(entries: list[dict], boundary: int) -> bool:
-    for e in entries[boundary + 1:]:
-        if e.get("type") == "assistant" and not e.get("isSidechain"):
-            for blk in (e.get("message") or {}).get("content") or []:
-                if (isinstance(blk, dict) and blk.get("type") == "text"
-                        and NO_GRADE in str(blk.get("text") or "").lower()):
-                    return True
-    return False
-
-
 def unfiled_grades(entries: list[dict], rows: list[dict], session: str) -> int:
-    filed = last_filing(entries)
-    return sum(1 for t in wince_finishes(entries, rows, session) if t > filed)
+    done = last_accounted(entries)
+    return sum(1 for t in wince_finishes(entries, rows, session) if t > done)
 
 
 def unbacked_overrules(session: str, since: str, path: str | None = None) -> int:
@@ -245,20 +255,25 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
                 f"Wince's findings: tell Garrett in one line which ones are unbacked, or re-run "
                 f"Wince on the W's full output."}
     rows = read_jsonl(log_path()) if log_rows is None else log_rows
+    reasons = []
     owed = unfiled_grades(entries, rows, session) if session else 0
-    if owed and not says_no_grade(entries, b):
-        return {"decision": "block", "reason":
-                f"{owed} Wince grade(s) finished in this session after the last time "
-                f"the grade register was written. File each pass in Skyne's register "
-                f"(python3 scripts/wince_grades.py add ...), so a grade that changed "
-                f"nothing still leaves a trace (RULED 2026-10-14). If that Wince run was "
-                f"not a graded pass, say \"no grade to file\" and why, in one line."}
+    if owed:
+        reasons.append(
+            f"{owed} Wince grade(s) finished in this session after the grade register "
+            f"was last written. Record them in Skyne's register (python3 "
+            f"scripts/wince_grades.py add ...; one command can record several), so a "
+            f"grade that changed nothing still leaves a trace (RULED 2026-10-14). If a "
+            f"Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
     order = from_log(rows, session, since) if session and len(since) == 20 else []
     source = "w_ran log"
     if not order:
         order, source = from_transcript(entries, b), "transcript"
     ws = unfollowed(order)
-    return {"decision": "block", "reason": refusal(ws, source)} if ws else None
+    if ws:
+        reasons.append(refusal(ws, source))
+    # One refusal a turn is all a Stop hook gets (stop_hook_active lets the
+    # next one through), so both debts go in it or the second is dropped.
+    return {"decision": "block", "reason": " ALSO: ".join(reasons)} if reasons else None
 
 
 def main() -> int:
@@ -399,8 +414,26 @@ def self_test() -> int:
                     "cd skyne && python3 - <<'PY'\nimport wince_grades as w\nw.add(doc, ...)\nPY")),
                      []) is None,
               "a script that imports the register's writer counts as filing")
-        check(decide(transcript(*graded, said("Wince read prose; no grade to file.")), []) is None,
+        check(decide(transcript(*graded, said('the hook wants "no grade to file" said')), []) is not None,
+              "PLANTED: prose that only MENTIONS the phrase (no colon) does not count as the escape")
+        check(decide(transcript(*graded, said("Wince read prose. No grade to file: it was a critique.")), []) is None,
               "a Wince run that was not a graded pass is let through when the reply says so")
+        early_escape = {"type": "assistant", "timestamp": "2026-10-12T16:00:00.500Z",
+                        "message": {"content": [{"type": "text", "text": "no grade to file: early"}]}}
+        check(decide(transcript(user, early_escape, *graded[1:]), []) is not None,
+              "PLANTED: 'no grade to file' said BEFORE the Wince run does not cover it")
+        later_turn = {"type": "user", "timestamp": "2026-10-12T17:00:00.000Z",
+                      "message": {"content": "next thing"}}
+        check(decide(transcript(*graded, said("No grade to file: prose only."), later_turn), [])
+              is None, "an escape said in an EARLIER turn still covers it -- no nagging every turn")
+        both = [{"event": "stop", "w": "wince", "session_id": "s1", "agent_id": "a1",
+                 "utc": "2026-10-12T16:00:20Z"}] * 2   # the hook registered twice
+        out = decide(transcript(*graded), both)
+        check(bool(out) and out["reason"].startswith("1 Wince grade"),
+              "a run in both the log and the transcript is counted once")
+        out = decide(transcript(*graded, call("wander")), [])
+        check(bool(out) and "wince_grades.py add" in out["reason"] and "Wander" in out["reason"],
+              "PLANTED: an unfiled grade AND an unfollowed W are both named in the one refusal")
         bg = (user, wince_call("2026-10-12T16:00:01.000Z"),
               wince_result("2026-10-12T16:00:02.000Z", "Async agent launched successfully."))
         check(decide(transcript(*bg), []) is None,
