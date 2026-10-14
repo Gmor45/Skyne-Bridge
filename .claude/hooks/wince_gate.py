@@ -35,12 +35,13 @@ AND A WINCE GRADE NOBODY FILED (added 2026-10-14)
 Garrett: *"if Wince gives it an F and it never changes then why did I do it?"*
 Skyne's `scripts/wince_grades.py` records every pass, but nothing made a
 session run it, so a grade that went nowhere left no trace. This refuses a
-reply ONCE when a Wince run FINISHED in this session after the last command
-that ran `wince_grades` (any form: `wince_grades.py add`, or a script that
-imports it). Finished means: a synchronous Agent call whose result came back,
-or a `stop` row in w_ran.py's log -- so a Wince still running in the
-background is never owed yet. A Wince run that was not a graded pass (a prose
-critique, say) is let through once the reply says "no grade to file: <why>".
+reply -- at most once a turn, and again every turn until it is dealt with --
+when a Wince run FINISHED in this session after the last command naming
+`wince_grades` (`wince_grades.py add`, or an inline script that imports it).
+Finished means: a synchronous Agent call whose result came back, or a `stop`
+row in w_ran.py's log -- so a Wince still running in the background is never
+owed yet. A Wince run that was not a graded pass (a prose critique, say) is
+let through once the reply says "no grade to file:" followed by the reason.
 
 WHAT IT DOES NOT DO (house-rules 21 point 5)
 --------------------------------------------
@@ -48,8 +49,17 @@ WHAT IT DOES NOT DO (house-rules 21 point 5)
   not that the command ran, succeeded, or wrote this grade. A `cat` of the
   script, or an `add` the register refused, reads as filed. And one filing
   covers every grade before it (a single script often records several), so
-  two grades and one filing pass. Like the register itself, what a session
-  types about its own work is trusted.
+  two grades and one filing pass. The escape works the same way: one
+  "no grade to file:" line covers every grade before it, real ones included.
+  Like the register itself, what a session types about its own work is
+  trusted.
+- A script SAVED to a file and run by name (`python3 seed.py`) is not seen
+  even if it imports the writer; the session gets refused and files with a
+  command that names it.
+- With no w_ran.py log (a cloud container, or the plugin not delivered), a
+  Wince run in the BACKGROUND is never seen finishing -- the transcript only
+  shows "Async agent launched" -- so it is never owed. Only synchronous runs
+  are caught on that path.
 - A W run as a generic agent (a session without Bridge's plugin has no W agent
   types) is invisible to both sources. Bridge's agent files and every product's
   family pointer tell the session to say so rather than pretend.
@@ -71,6 +81,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -162,8 +173,10 @@ def refusal(ws: list[str], source: str) -> str:
 
 
 FILER = "wince_grades"            # Skyne's register writer, in any invocation
-NO_GRADE = "no grade to file:"    # the stated escape: "no grade to file: <why>". The colon
-                                  # keeps prose ABOUT the phrase from counting as using it.
+# The stated escape: "no grade to file:" and a reason. The colon keeps prose
+# ABOUT the phrase from counting, and the reason must be real text -- the
+# refusal's own placeholder "<why>", quoted back, is not one (Wince, pass 2).
+NO_GRADE = re.compile(r"no grade to file:\s*(?!<why>)[^\s\"'<>]", re.I)
 SHELLS = ("Bash", "PowerShell")
 
 
@@ -218,7 +231,7 @@ def last_accounted(entries: list[dict]) -> str:
             filed = (blk.get("type") == "tool_use" and blk.get("name") in SHELLS
                      and FILER in str((blk.get("input") or {}).get("command") or ""))
             escaped = (blk.get("type") == "text"
-                       and NO_GRADE in str(blk.get("text") or "").lower())
+                       and bool(NO_GRADE.search(str(blk.get("text") or ""))))
             if filed or escaped:
                 last = max(last, _ts(e.get("timestamp")))
     return last
@@ -247,15 +260,15 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
         return None
     since = str(entries[b].get("timestamp") or "")[:19] + "Z"
     session = str(payload.get("session_id") or "")
+    reasons = []
     n = unbacked_overrules(session, since, overrules_path) if session and len(since) == 20 else 0
     if n:
-        return {"decision": "block", "reason":
-                f"Wince overruled {n} verdict(s) this turn without a receipt that holds up "
-                f"(overrule_gate.py logged them as unbacked). Do not pass those verdicts on as "
-                f"Wince's findings: tell Garrett in one line which ones are unbacked, or re-run "
-                f"Wince on the W's full output."}
+        reasons.append(
+            f"Wince overruled {n} verdict(s) this turn without a receipt that holds up "
+            f"(overrule_gate.py logged them as unbacked). Do not pass those verdicts on as "
+            f"Wince's findings: tell Garrett in one line which ones are unbacked, or re-run "
+            f"Wince on the W's full output.")
     rows = read_jsonl(log_path()) if log_rows is None else log_rows
-    reasons = []
     owed = unfiled_grades(entries, rows, session) if session else 0
     if owed:
         reasons.append(
@@ -375,6 +388,9 @@ def self_test() -> int:
         out = decide(transcript(user, call("wander"), tool_result, call("wince")), [], op)
         check(bool(out) and "unbacked" in out["reason"],
               "PLANTED: an unbacked Wince overrule this turn refuses the reply")
+        out = decide(transcript(user, call("wander"), tool_result), [], op)
+        check(bool(out) and "unbacked" in out["reason"] and "Wander" in out["reason"],
+              "PLANTED: an unbacked overrule no longer hides an unfollowed W -- both are named")
         stale_op = os.path.join(d, "stale.jsonl")
         with open(stale_op, "w", encoding="utf-8") as f:
             f.write(json.dumps({"status": "unbacked", "session_id": "s1",
@@ -418,6 +434,9 @@ def self_test() -> int:
               "PLANTED: prose that only MENTIONS the phrase (no colon) does not count as the escape")
         check(decide(transcript(*graded, said("Wince read prose. No grade to file: it was a critique.")), []) is None,
               "a Wince run that was not a graded pass is let through when the reply says so")
+        quoted = decide(transcript(*graded), [])["reason"]
+        check(decide(transcript(*graded, said(f"The hook said: {quoted}")), []) is not None,
+              "PLANTED: quoting the refusal back (its '<why>' placeholder) is not the escape")
         early_escape = {"type": "assistant", "timestamp": "2026-10-12T16:00:00.500Z",
                         "message": {"content": [{"type": "text", "text": "no grade to file: early"}]}}
         check(decide(transcript(user, early_escape, *graded[1:]), []) is not None,
