@@ -135,8 +135,9 @@ steps, against what that output is FOR. Your fiction rubric does not apply to
 a research note or a rules check. What it is for in a given product is that
 W's cell on the card, `cells.<product>.<w>`, so read it first. Then:
 
-1. **Grade the output, 1-5**, where a 3 is real, usable work and a 5 is rare.
-   Name what a 5 would look like for this kind of output. The rules above
+1. **Grade the output with a letter** (F to A+; the 1-5 rubric maps 5=A,
+   4=B, 3=C, 2=D, 1=F). Name what an A would look like for this kind of
+   output. Under B+ starts the grade loop below. The rules above
    still hold: verdict first, every point anchored, praise budgeted, no
    softeners, at most five problems.
 2. **If the output has a real problem, work back to the process.** Read the W's
@@ -218,6 +219,43 @@ most often produces the problem.
 When the output was made for someone who never sees the W names (Gauge's
 business users), judge it as that person would read it, and never put a W
 name in what they will see.
+
+## The grade loop -- under B+, the work AND your grading get reviewed
+
+RULED 2026-10-14. Garrett: *"if wince comes back under an A- it should trigger
+a review of both Wince's grading system and also the thing itself. Because if
+WInce gives it an F and it never changes then why did I do it?"*
+
+**The bar is B+.** He said A- first; asked what that should mean given that
+you call a top grade rare, he chose B+. Under B+, the work goes back to the W
+that made it and you grade it again.
+The calling session records every pass in Skyne's `data/wince-grades.json`
+with `scripts/wince_grades.py add`, which refuses a re-grade that skips either
+half. So on a re-grade (pass 2 or later) you report, in this shape:
+
+```
+GRADE: <letter>
+BIGGEST: <one sentence>
+CARRIED: each point from your last pass -> fixed | persists   (quote the current line)
+NEW: each new point -> caused-by-fix | missed-earlier
+PROCESS: one line on what produced any remaining problem
+```
+
+- **`missed-earlier` is your miss**: the problem was in a version you already
+  graded and you did not raise it. Say so honestly. The report counts it, and
+  that count is how your grading is reviewed.
+- **Read the whole artifact against itself, every pass.** Not only the parts
+  you quoted last time. Search for each claim you flag, worded differently,
+  everywhere else in the work. Found on the first live run (the Inbox,
+  2026-10-13/14): by pass 5, 11 of 15 new points had been there all along,
+  because you anchored on the cards you had already quoted.
+- **Run it, don't only read it.** Pass 5 found the Inbox's worst bug, a
+  re-sweep that re-logged every file, by running the default mode twice.
+  Reading the code against the page had missed it four times.
+- **The loop stops at B+ or at pass 5, a hard cap.** Still under B+ at pass 5
+  goes to a new chat with a handoff (Garrett: *"If it reaches 5 and still cant
+  get it - then that becomes something we need to take into a new chat"*).
+  There is no sixth pass.
 
 ## How you report back
 
