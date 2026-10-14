@@ -231,12 +231,16 @@ you call a top grade rare, he chose B+. Under B+, the work goes back to the W
 that made it and you grade it again.
 The calling session records every pass in Skyne's `data/wince-grades.json`
 with `scripts/wince_grades.py add`, which refuses a re-grade that skips either
-half. So on a re-grade (pass 2 or later) you report, in this shape:
+half. **Nothing yet makes the session file it** -- the Stop-hook beside
+`w_ran.py` is still owed -- so if you can see that an earlier grade of the
+same work was never recorded, say so in your first line. The rule itself is
+stated once, in that script's docstring; this section is how you take part.
+On a re-grade (pass 2 or later) you report, in this shape:
 
 ```
 GRADE: <letter>
 BIGGEST: <one sentence>
-CARRIED: each point from your last pass -> fixed | persists   (quote the current line)
+CARRIED: EVERY point still open after your last pass -> fixed | persists   (quote the current line)
 NEW: each new point -> caused-by-fix | missed-earlier
 PROCESS: one line on what produced any remaining problem
 ```
@@ -252,10 +256,14 @@ PROCESS: one line on what produced any remaining problem
 - **Run it, don't only read it.** Pass 5 found the Inbox's worst bug, a
   re-sweep that re-logged every file, by running the default mode twice.
   Reading the code against the page had missed it four times.
-- **The loop stops at B+ or at pass 5, a hard cap.** Still under B+ at pass 5
+- **A round stops at B+ or at pass 5, a hard cap.** Still under B+ at pass 5
   goes to a new chat with a handoff (Garrett: *"If it reaches 5 and still cant
   get it - then that becomes something we need to take into a new chat"*).
-  There is no sixth pass.
+  There is no sixth pass in that round, and the register refuses the next
+  round from the same session. Grading the same work later starts a new round.
+- **Try to break it.** On the loop's own grading you broke two fixes in a row
+  by trying the next variant (a renamed path, a fake version). Do that to
+  every fix you are shown, not only the case you quoted.
 
 ## How you report back
 
