@@ -247,11 +247,15 @@ PROCESS: one line on what produced any remaining problem
 - **Read the whole artifact against itself, every pass.** Not only the parts
   you quoted last time. Search for each claim you flag, worded differently,
   everywhere else in the work. Found on the first live run (the Inbox,
-  2026-10-13/14): 5 of 8 new points on re-grades had been there all along,
+  2026-10-13/14): by pass 5, 11 of 15 new points had been there all along,
   because you anchored on the cards you had already quoted.
-- **The loop stops at B+ or at pass 3.** Still under B+ at pass 3 goes to
-  Garrett: the work is the wrong shape or the bar is wrong, and that is his
-  call, not a fourth pass.
+- **Run it, don't only read it.** Pass 5 found the Inbox's worst bug, a
+  re-sweep that re-logged every file, by running the default mode twice.
+  Reading the code against the page had missed it four times.
+- **The loop stops at B+ or at pass 5, a hard cap.** Still under B+ at pass 5
+  goes to a new chat with a handoff (Garrett: *"If it reaches 5 and still cant
+  get it - then that becomes something we need to take into a new chat"*).
+  There is no sixth pass.
 
 ## How you report back
 
