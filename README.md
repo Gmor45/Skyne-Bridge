@@ -191,6 +191,10 @@ skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
   tried what was made, the lazy way. "nothing for Wren to try:" plus a reason
   lets lore and notes through. Builds done in the main loop, not by a W, are
   not seen.
+- **Research is graded too** (RULED 2026-10-17) -- `wince_gate.py` counts a
+  `research` or `deep-research` skill run as a W, so Wince must follow it.
+  Research questions route to the `research` skill, not to Wander: Wander
+  scouts, the skill researches.
 - **Weir's event trigger** — `weir_gate.py` on `Stop`. A reply that ends on a
   question to Garrett, lays out alternatives, and never says which it would
   pick is refused once (house-rules 10: he wants the call made). It never
