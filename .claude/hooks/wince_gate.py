@@ -67,6 +67,9 @@ WHAT IT DOES NOT DO (house-rules 21 point 5)
   refusal says which output; the critique itself is still Wince's.
 - It does not critique Garrett. That lens is Wince's, on request; nothing here
   fires on his messages.
+- A `research` skill run is seen only in the transcript. Where w_ran.py's log
+  has rows for the turn (it logs agents, not skills), the log wins and a
+  research run is missed if another W also ran and Wince followed that W.
 
 NEVER TRAPS A SESSION
 ---------------------
@@ -119,8 +122,15 @@ def last_user_boundary(entries: list[dict]) -> int:
     return -1
 
 
+# A research run is graded like a W's output (RULED 2026-10-17): the
+# `research` skill wraps Anthropic's `deep-research`, which spawns GENERIC
+# agents, so without this it would be the one big output Wince never saw.
+RESEARCH_SKILLS = ("research", "deep-research")
+
+
 def from_transcript(entries: list[dict], boundary: int) -> list[str]:
-    """W ids called from the main loop since the boundary, in call order."""
+    """W ids called from the main loop since the boundary, in call order.
+    A research skill run counts as the pseudo-W "research"."""
     order = []
     for e in entries[boundary + 1:]:
         if e.get("type") != "assistant" or e.get("isSidechain"):
@@ -129,11 +139,15 @@ def from_transcript(entries: list[dict], boundary: int) -> list[str]:
         if not isinstance(content, list):
             continue
         for blk in content:
-            if (isinstance(blk, dict) and blk.get("type") == "tool_use"
-                    and blk.get("name") in ("Agent", "Task")):
+            if not (isinstance(blk, dict) and blk.get("type") == "tool_use"):
+                continue
+            if blk.get("name") in ("Agent", "Task"):
                 w = member((blk.get("input") or {}).get("subagent_type"))
                 if w:
                     order.append(w)
+            elif (blk.get("name") == "Skill" and str((blk.get("input") or {}).get(
+                    "skill") or "").split(":")[-1] in RESEARCH_SKILLS):
+                order.append("research")
     return order
 
 
@@ -360,6 +374,18 @@ def self_test() -> int:
         p = transcript(user, call("wander"), tool_result)
         check(decide(dict(p, stop_hook_active=True), []) is None,
               "already refused once this turn: it allows (never traps a session)")
+
+        def skill(name):
+            return {"type": "assistant", "timestamp": t0, "message": {"content": [
+                {"type": "tool_use", "name": "Skill", "input": {"skill": name}}]}}
+        out = decide(transcript(user, skill("research"), tool_result), [])
+        check(bool(out) and "Research" in out["reason"],
+              "PLANTED: a research skill run with no Wince after it is refused")
+        check(decide(transcript(user, skill("anthropic-skills:deep-research"), tool_result,
+                                call("wince")), []) is None,
+              "a deep-research run followed by Wince allows")
+        check(decide(transcript(user, skill("handoff"), tool_result), []) is None,
+              "an ordinary skill is not a W and owes Wince nothing")
 
         # the log: authoritative, ordered by finish, and per-session
         log = [{"event": "stop", "w": "wander", "session_id": "s1", "utc": "2026-10-12T16:00:05Z"},
