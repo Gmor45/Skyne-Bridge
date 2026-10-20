@@ -50,11 +50,6 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/mechanism_gap_gate.py\"",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardrail_gate.py\"",
-            "timeout": 10
           }
         ]
       },
@@ -107,11 +102,6 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/shell_shapes.py\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardrail_gate.py\"",
             "timeout": 10
           }
         ]
