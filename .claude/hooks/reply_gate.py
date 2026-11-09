@@ -1252,7 +1252,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # happened once this session, then never again — matching the rule's own
     # wording ("on your first substantive turn"), not a repeating nag.
     if not companion_done and not companion_opted_out(text):
-        problems.append(
+        problems.append(WARN["companion"] +
             "this session has not run `companion.py check` yet, and "
             "house-rules 14 says publish a Companion artifact on the first "
             "substantive turn of any working session. Run "
@@ -1375,7 +1375,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # house-rules 1e: a PR just opened or merged this turn and the repo's
     # backlog was never named. See pr_close_missing_backlog_count().
     if pr_close_missing_backlog_count(text, tools):
-        problems.append(
+        problems.append(WARN["pr-count"] +
             "this turn opened or merged a PR and the reply never names this "
             "repo's open-PR count and how many of those are conflicting. "
             "House-rules 1e: a green PR left unmerged rots into a conflict "
@@ -1468,7 +1468,7 @@ def evaluate(text, tools=None, require_block=True, handoff_done=True,
     # not about whether a block is required at all, so the cooldown escape
     # hatch below must not silence it either.
     if wrapup_count and wrapup_count > 1:
-        problems.append(
+        problems.append(WARN["wrapups"] +
             "this turn carries %d wrap-ups (the About/What I did/Why/.../TLDR "
             "block), not one. House-rules 0a-i: it is ONE named thing and it "
             "belongs on the FINAL message of the turn, nowhere else — an "
@@ -1650,6 +1650,75 @@ def build_reason(problems, attempt, require_block=True, block_sent=False):
         "summarise it away."
     )
     return "%s\n%s\n%s%s" % (head, body, shape, RESEND_RULE)
+
+
+# ---------------------------------------------------------------- warn, not refuse
+#
+# RULED 2026-11-09 (Skyne DECISIONS.md). Garrett: "make the top three refusals
+# warn instead of refuse ... I do like claude via skyne knowing to do this -
+# the answer is WHEN so its not costing extra tokens". Measured the same day:
+# Stop-hook refusals forced 9 extra turns in one chat and at least 32 across
+# 29 recent ones, and these three causes were about half of them. Each refusal
+# re-sends the whole chat to add one line.
+#
+# So these three still FIRE, but no longer hold the turn. The finding is saved
+# and handed to Claude at the start of the NEXT turn by reply_notes.py, riding
+# on Garrett's own message -- the lesson arrives, the extra turn does not. The
+# PR-count one also arrives BEFORE the reply now: reply_notes.py's PostToolUse
+# half reminds Claude the moment a PR is opened or merged.
+WARN = {
+    "companion": "WARN[companion]: ",
+    "pr-count": "WARN[pr-count]: ",
+    "wrapups": "WARN[wrapups]: ",
+}
+# What reply_notes.py injects next turn: one short line each, not the full
+# refusal text -- the point is to cost almost nothing.
+WARN_NOTE = {
+    "companion": "Last reply: a working session's first substantive turn had no "
+                 "Companion and no 'No Companion needed -- <why>' line (house-rules 14).",
+    "pr-count": "Last reply opened or merged a PR without naming that repo's open-PR "
+                "and conflicting counts (house-rules 1e; data/open-prs.json perRepo).",
+    "wrapups": "Last turn carried more than one wrap-up. Only the final message of a "
+               "turn gets one (house-rules 0a-i).",
+}
+
+
+def split_problems(problems):
+    """(blocking, warn_keys): the three WARN-tagged findings no longer hold the
+    turn; everything else still does."""
+    blocking, warns = [], []
+    for p in problems:
+        key = next((k for k, tag in WARN.items() if p.startswith(tag)), None)
+        if key:
+            warns.append(key)
+        else:
+            blocking.append(p)
+    return blocking, warns
+
+
+def notes_path(transcript_path):
+    import hashlib
+    key = hashlib.sha256((transcript_path or "").encode()).hexdigest()[:16]
+    return os.path.join(_state_dir(), "notes-%s.json" % key)
+
+
+def save_notes(transcript_path, warn_keys):
+    """Queue next turn's reminders. Never raises: a note that fails to save
+    must not turn a warning back into a trapped turn."""
+    if not warn_keys:
+        return
+    try:
+        os.makedirs(_state_dir(), exist_ok=True)
+        path = notes_path(transcript_path)
+        old = []
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                old = json.load(fh)
+        keys = list(dict.fromkeys(list(old) + list(warn_keys)))
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(keys, fh)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- counter
@@ -2243,6 +2312,27 @@ def self_test():
     print("  %-34s %s" % ('rule 3 ignores a mere observation', "ok" if ok else "FAIL"))
     if not ok:
         fails.append('observing the chat is long is not recommending it end')
+
+    # ---- 2026-11-09: three findings warn, the rest still refuse ------------
+    _b, _w = split_problems(evaluate(_end, handoff_done=True, companion_done=False))
+    ok = "companion" in _w and not any("Companion" in g for g in _b)
+    print("  %-34s %s" % ('companion is a warning, not a refusal', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the Companion finding must be WARN-tagged and not block")
+    _b, _w = split_problems(evaluate(GOOD, wrapup_count=2))
+    ok = "wrapups" in _w and not any("wrap-up" in g for g in _b)
+    print("  %-34s %s" % ('two wrap-ups is a warning', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("the double wrap-up finding must be WARN-tagged and not block")
+    _b, _w = split_problems(["a real refusal", WARN["pr-count"] + "x"])
+    ok = _b == ["a real refusal"] and _w == ["pr-count"]
+    print("  %-34s %s" % ('other refusals still block', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("split_problems must keep every untagged finding blocking")
+    ok = set(WARN) == set(WARN_NOTE)
+    print("  %-34s %s" % ('every warning has a next-turn note', "ok" if ok else "FAIL"))
+    if not ok:
+        fails.append("each WARN key needs a WARN_NOTE line for reply_notes.py")
 
     # ---- house-rules 14: the Companion gate ---------------------------------
     ok = any("Companion" in g for g in evaluate(_end, handoff_done=True, companion_done=False))
@@ -2840,6 +2930,8 @@ def run():
         print("design gate ran: %s" % design_checked(entries, b))
         print("cooldown: since_last=%s require_block=%s (this is a DRY RUN -- "
               "state is not written)" % (since_last, require_block))
+        problems, warns = split_problems(problems)
+        print("warn only (handed to the next turn): %s" % (warns or "none"))
         print("verdict: %s" % ("BLOCK" if problems else "allow"))
         for p in problems:
             print("  - " + p)
@@ -2881,6 +2973,8 @@ def run():
                         unran=ran_it.check(list(_tool_calls(entries, boundary)),
                                            latest_prose(entries, boundary) or text),
                         block_src=current_wrapup(entries, boundary))
+    problems, warns = split_problems(problems)
+    save_notes(transcript_path, warns)
     if not problems:
         if not trivial:
             record_cooldown(transcript_path, since_last, require_block)

@@ -64,6 +64,8 @@ jobs:
               print("missing agent(s):", missing, "| name != filename:", bad, "| members:", sorted(members))
               sys.exit(1)
           PY
+      - name: Reply notes self-test (reply-gate warnings delivered next turn, RULED 2026-11-09)
+        run: python3 .claude/hooks/reply_notes.py --self-test
       - name: W-ran recorder self-test (which Skyne Family agent actually ran)
         run: python3 .claude/hooks/w_ran.py --self-test
       - name: The W-ran recorder is REGISTERED on SubagentStart and SubagentStop
