@@ -144,7 +144,7 @@ it was asked, report counts rather than impressions, stop and ask rather than
 guess at anything ambiguous, and never touch git — that stays with whichever
 session spawned it.
 
-**Update 2026-11-16 (plugin 1.6.0):** only `wince`, `wren`, `wander` and `haiku-mechanic` remain agent files. Ward, Warden, Weir, Whittle, Wick and Wistin are archived in `.claude/agents-archive/` and stay as labels (skyne DECISIONS R2, R8). The paragraph below is the history of how they started.
+**Update 2026-11-16 (plugin 1.6.1):** only `wince`, `wren`, `wander` and `haiku-mechanic` remain agent files. Ward, Warden, Weir, Whittle, Wick and Wistin are archived in `.claude/agents-archive/` and stay as labels (skyne DECISIONS R2, R8). The paragraph below is the history of how they started.
 
 **The Skyne Family as agents — added 2026-10-05.** Garrett, braindump
 10/05/26: *"I feel like the W's should be agents, not just personas"* and

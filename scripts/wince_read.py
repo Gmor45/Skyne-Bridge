@@ -39,13 +39,7 @@ FILLER = ["it is important to note", "please note that", "make sure to", "needle
 
 # Known gaps found 2026-11-17. The reporter must find no MORE than these.
 # Each is a plain-sentence prefix; a finding is "known" if it starts with one.
-KNOWN_GAPS = [
-    "wince.md names `.claude/skills/story-review/GRADING.md`",
-    "wince.md names `.claude/skills/humanizer/VOICE.md`",
-    "wince.md names `resources/prose-critique/analyze.py`",
-    "wince.md names `scripts/wince_grades.py`",
-    "wince.md names `render_page.py`",
-]
+KNOWN_GAPS = []  # the five repo-less references were fixed in wince.md 2026-11-17
 
 PATH_TOKEN = re.compile(r"`([A-Za-z0-9_./\-]+\.(?:py|md|json|yml|html))`")
 

@@ -163,6 +163,12 @@ jobs:
         run: python3 .claude/hooks/design_source_gate.py --self-test
       - name: Worktree warn self-test (house-rules 1a)
         run: python3 .claude/hooks/worktree_warn.py --self-test
+      - name: Model-switch hook self-test
+        run: python3 .claude/hooks/model_switch.py --self-test
+      - name: Session-start hook self-test
+        run: python3 .claude/hooks/session_start.py --self-test
+      - name: Solved-guard hook self-test
+        run: python3 .claude/hooks/solved_guard.py --self-test
       - name: Ward reporter self-test (hooks, skills and plugin files registered and in step)
         run: python3 scripts/ward_in_step.py --self-test
       - name: Wren reporter self-test (each way in reaches the estate, or says which step is manual)
