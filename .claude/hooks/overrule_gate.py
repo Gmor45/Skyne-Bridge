@@ -15,9 +15,11 @@ WHAT IT DOES. On SubagentStop for the wince agent:
   2. Each receipt (JSON in a ```overrule fence) must have `cell`,
      `overruled`, `their_words`, `their_rebuttal`, `evidence`. Both quotes must
      appear VERBATIM in that W's OWN output in this session's transcript: the
-     result of an Agent call to that W, or its hand-back. Claude's own text
-     (prompts, summaries it wrote) never counts, so a summary cannot launder
-     a quote.
+     result of an Agent call to that W, its hand-back, or (since 2026-11-16,
+     when six Ws became labels) the main-loop reply that carries that W's
+     label ("Wistin: ...") and made the work. Claude's own text (prompts,
+     summaries it wrote, replies labeled "Claude:") never counts, so a summary
+     cannot launder a quote.
   3. On the second stop (`stop_hook_active`) it lets Wince finish but writes
      the overrule to ~/.claude/skyne/overrules.jsonl as `unbacked`, and
      wince_gate.py then refuses the main reply until Claude tells Garrett.
@@ -77,10 +79,16 @@ def _text(content) -> str:
 def w_outputs(entries: list, w: str) -> str:
     """Everything W itself said this session: Agent results for W, W's hand-backs."""
     calls, out = {}, []
+    label = re.compile(rf"^\s*{re.escape(w)}:\s", re.I)
     for e in entries:
         content = (e.get("message") or {}).get("content")
         if e.get("type") == "assistant" and isinstance(content, list):
             for b in content:
+                # a main-loop reply under W's own label is W's output (the six
+                # label-only Ws have no agent run to quote)
+                if (isinstance(b, dict) and b.get("type") == "text" and not e.get("isSidechain")
+                        and label.match(str(b.get("text") or ""))):
+                    out.append(str(b["text"]))
                 if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in ("Agent", "Task"):
                     calls[b.get("id")] = member((b.get("input") or {}).get("subagent_type"))
         elif e.get("type") == "user":
@@ -220,6 +228,17 @@ def self_test() -> int:
     check(decide(stop(fence(honest)), entries) is None, "an honest receipt with Wren's real words passes")
     check(decide(stop(fence(dict(honest, overruled="weir"))), entries) is not None,
           "PLANTED: quoting a W that produced nothing this session is refused")
+    weir_reply = {"type": "assistant", "message": {"content": [{"type": "text", "text":
+                  "Weir: I would ship the second option, because the first needs a migration nobody has time for."}]}}
+    weir_rec = {"cell": "plan.weir", "overruled": "weir", "evidence": "plan.md",
+                "their_words": "I would ship the second option",
+                "their_rebuttal": "the first needs a migration nobody has time for"}
+    check(decide(stop(fence(weir_rec)), entries + [weir_reply]) is None,
+          "a receipt quoting the labeled reply that made the work (Weir:) passes")
+    claude_reply = {"type": "assistant", "message": {"content": [{"type": "text", "text":
+                    "Claude: I would ship the second option, because the first needs a migration nobody has time for."}]}}
+    check(decide(stop(fence(weir_rec)), entries + [claude_reply]) is not None,
+          "PLANTED: the same words under a Claude: label are not Weir's, so the receipt is refused")
     check(decide(stop("```overrule\n{not json\n```"), entries) is not None, "PLANTED: a broken receipt is refused")
     check(decide(dict(stop("I overrule wren"), agent_type="load-house-rules:wren"), entries) is None,
           "only Wince is gated")

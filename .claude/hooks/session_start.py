@@ -281,11 +281,28 @@ def self_test():
     return 0
 
 
+def follow_block():
+    """The W follow-up readout (cost, switch, queues, heartbeat, day-14 review).
+    These lines reach CLAUDE, not Garrett, so the block tells the session to say
+    them (round 11). Empty if there is nothing to say or the module is absent."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import w_follow
+        lines = w_follow.session_lines()
+    except Exception:  # noqa: BLE001 -- a readout must never cost a session start
+        return ""
+    if not lines:
+        return ""
+    return "\n".join(["", "=== W follow-ups (Garrett cannot see this block) ===",
+                      "RELAY: tell Garrett the lines below in your first reply, in plain words.",
+                      *lines, "=== end ==="])
+
+
 def main():
     if "--self-test" in sys.argv:
         sys.exit(self_test())
     try:
-        print(brief())
+        print(brief() + follow_block())
     except Exception as e:  # never fail a session start
         print("=== load-house-rules plugin · SessionStart ===")
         print(f"LOAD THE RULES ANYWAY: {LOAD_SKILL} — {NOT_THE_COPY}.")

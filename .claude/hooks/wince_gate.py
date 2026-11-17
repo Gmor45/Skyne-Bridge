@@ -71,10 +71,39 @@ WHAT IT DOES NOT DO (house-rules 21 point 5)
   has rows for the turn (it logs agents, not skills), the log wins and a
   research run is missed if another W also ran and Wince followed that W.
 
+STAGE 2 (RULED 2026-11-16, R5 R9 R10 R12 R19; plan Piece C)
+-----------------------------------------------------------
+Two NEW triggers join the agent-W one, and the filed-check is rebuilt:
+* A reply LABELED as a W (first or newest text block of the turn, any label but
+  "Claude:" and "Wince:") owes a Wince run that finished AFTER the turn's last
+  Edit/Write/publish. A "Wince:" label is never a review: only a `wince` agent
+  run counts.
+* A PUBLISH (Artifact publish, not an asset upload; a Figma write tool from
+  figma-tools.json) owes the same.
+* When Wren is owed (wren_gate.py: a runnable publish, or a maker label in a
+  turn that wrote a file) Wren runs first and ONE Wince pass grades the work and
+  Wren's report, so Wince must finish after Wren too.
+* The filed-check (PC): each Wince FINISH is accounted for separately and must
+  be matched by a row whose SESSION is this session and whose time is after that
+  finish, in `~/.claude/skyne/wince-grades-queue.jsonl` (via `wince_grades.py
+  queue`) or a register (via `add`/a flush); a red-team lens-4 run (the prompt
+  carries `[red-team lens 4: <loop id>]`, joined to its agent id through the
+  Agent result's `toolUseResult.agentId`) only by a `redteam_rounds.py` row for
+  that loop. Typing the script's NAME no longer counts. One filing covers one
+  finish. `no grade to file: <why>` still accounts for the finishes before it.
+* The switch `~/.claude/skyne/w-follow-mode` (w_follow.py): `log` makes the NEW
+  triggers record "would have refused" and refuse nothing. The agent-W trigger,
+  unbacked overrules and the filed-check keep blocking either way (R10).
+* Every call writes a row to `~/.claude/skyne/w-follow.jsonl`.
+* In the cloud the new triggers only LOG (w_follow.cloud_enforces) and the old
+  filed-check rules apply: R12 is NOT live there until a cloud session has
+  confirmed delivery and the attended/scheduled signal.
+
 NEVER TRAPS A SESSION
 ---------------------
 `stop_hook_active` (the platform's re-entry flag) means it already refused once
-this turn: it allows. Every error path prints nothing and exits 0.
+this turn: it allows (and logs "released"). Every error path prints nothing and
+exits 0.
 
 Usage:
     python3 wince_gate.py             # the hook (JSON on stdin)
@@ -89,6 +118,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from w_ran import log_path, member  # noqa: E402  -- one W roster, one log path
+import w_follow  # noqa: E402  -- the switch, the log, publish detection, filings
 
 CRITIC = "wince"
 
@@ -201,7 +231,7 @@ def _ts(s) -> str:
     return str(s or "")[:19]
 
 
-def wince_finishes(entries: list[dict], rows: list[dict], session: str) -> list[str]:
+def wince_finishes(entries: list[dict], rows: list[dict], session: str) -> list[str]:   # legacy (cloud)
     """When each Wince run in this session FINISHED. The log when it has rows
     for this session, else the transcript -- the same precedence as the
     W-follow check, so one run is never counted twice (Wince, hook pass 1)."""
@@ -266,43 +296,274 @@ def unbacked_overrules(session: str, since: str, path: str | None = None) -> int
                and r.get("session_id") == session and str(r.get("utc") or "") >= since)
 
 
-def decide(payload: dict, log_rows: list[dict] | None = None,
-           overrules_path: str | None = None) -> dict | None:
-    if payload.get("stop_hook_active"):
-        return None
+# --------------------------------------------------------------- stage 2 logic
+
+CLAUDE_LABEL = re.compile(r"^\s*Claude:\s")
+
+
+def agent_runs(entries: list[dict], rows: list[dict], session: str, who: str,
+               facts: dict | None = None) -> list[dict]:
+    """Every FINISH of agent `who` in this session: {finish, agent_id, loop}.
+    The w_ran log wins when it has rows for this session (it sees background
+    runs, and gives each run's agent id); the transcript is the fallback and
+    sees only synchronous results."""
+    facts = facts or w_follow.turn_facts(entries, -1)
+    seen, logged = set(), []
+    for i, r in enumerate(rows):
+        if (r.get("event") == "stop" and r.get("w") == who
+                and r.get("session_id") == session):
+            key = r.get("agent_id") or (r.get("utc"), i)
+            if key in seen:
+                continue          # the hook can be registered twice: one row per agent
+            seen.add(key)
+            logged.append({"finish": _ts(r.get("utc")), "agent_id": r.get("agent_id"),
+                           "loop": facts["lens4_by_agent"].get(r.get("agent_id"))})
+    logged = [x for x in logged if x["finish"]]
+    if logged:
+        return logged
+    out, calls = [], {}
+    for e in entries:
+        if e.get("type") == "assistant" and not e.get("isSidechain"):
+            for blk in (e.get("message") or {}).get("content") or []:
+                if (isinstance(blk, dict) and blk.get("type") == "tool_use"
+                        and blk.get("name") in ("Agent", "Task")
+                        and member((blk.get("input") or {}).get("subagent_type")) == who):
+                    calls[blk.get("id")] = blk
+        elif e.get("type") == "user" and calls:
+            for blk in (e.get("message") or {}).get("content") or []:
+                if (isinstance(blk, dict) and blk.get("type") == "tool_result"
+                        and blk.get("tool_use_id") in calls
+                        and "Async agent launched" not in json.dumps(blk.get("content"))):
+                    call = calls[blk["tool_use_id"]]
+                    m = w_follow.LENS4_RX.search(str((call.get("input") or {}).get("prompt") or ""))
+                    out.append({"finish": _ts(e.get("timestamp")), "agent_id": None,
+                                "loop": m.group(1).strip() if m else None})
+    return [x for x in out if x["finish"]]
+
+
+def last_escape_ts(entries: list[dict]) -> str:
+    """Newest main-loop line starting 'no grade to file: <reason>'."""
+    last = ""
+    for e in entries:
+        if e.get("type") != "assistant" or e.get("isSidechain"):
+            continue
+        for blk in (e.get("message") or {}).get("content") or []:
+            if (isinstance(blk, dict) and blk.get("type") == "text"
+                    and NO_GRADE.search(str(blk.get("text") or ""))):
+                last = max(last, _ts(e.get("timestamp")))
+    return last
+
+
+def register_candidates(cwd: str) -> list[str]:
+    """Skyne checkouts whose registers may already hold this session's filings."""
+    home = os.path.expanduser("~")
+    roots = [cwd, os.environ.get("SKYNE_DIR", ""), os.path.join(home, "claude-audit-wt-live"),
+             os.path.join(home, "claude-audit")]
+    roots += [x for x in os.environ.get("SKYNE_EXTRA_ROOTS", "").split(os.pathsep) if x]
+    return [r for r in dict.fromkeys(roots) if r and os.path.isdir(r)]
+
+
+def origin_register_files(session: str, roots: list[str]) -> list[str]:
+    """Copies of origin/main's registers (best effort, short timeouts) as temp
+    files, so a filing that was flushed and dropped from the queue still counts."""
+    import subprocess
+    import tempfile
+    out = []
+    for root in roots:
+        for rel in ("data/wince-grades.json", "data/redteam-rounds.json"):
+            try:
+                r = subprocess.run(["git", "-C", root, "show", f"origin/main:{rel}"],
+                                   capture_output=True, text=True, timeout=4,
+                                   stdin=subprocess.DEVNULL, encoding="utf-8")
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if r.returncode == 0 and session in r.stdout:
+                fd, path = tempfile.mkstemp(suffix=".json", prefix="origin-reg-")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(r.stdout)
+                out.append(path)
+        # the checkout's own working registers count too (a worktree `add`)
+        for rel in ("data/wince-grades.json", "data/redteam-rounds.json"):
+            path = os.path.join(root, rel.replace("/", os.sep))
+            if os.path.isfile(path):
+                out.append(path)
+    return out
+
+
+def owed_filings(entries, rows, session, facts, cwd="") -> list[dict]:
+    runs = agent_runs(entries, rows, session, CRITIC, facts)
+    if not runs:
+        return []
+    esc = last_escape_ts(entries)
+    fil = w_follow.filings(session)
+    owed = w_follow.unfiled_runs(runs, fil, esc)
+    if owed:
+        # not in the queues: has a flush already moved them to a register?
+        regs = origin_register_files(session, register_candidates(cwd))
+        extra = [x for x in os.environ.get("SKYNE_EXTRA_REGISTERS", "").split(os.pathsep) if x]
+        try:
+            owed = w_follow.unfiled_runs(runs, w_follow.filings(session, regs + extra), esc)
+        finally:
+            for pth in regs:
+                if os.path.basename(pth).startswith("origin-reg-"):
+                    try:
+                        os.unlink(pth)
+                    except OSError:
+                        pass
+    return owed
+
+
+def evaluate(payload: dict, log_rows: list[dict] | None = None,
+             overrules_path: str | None = None) -> dict | None:
+    """Everything the gate knows about this turn. None if there is no turn."""
     entries = read_jsonl(str(payload.get("transcript_path") or ""))
     b = last_user_boundary(entries)
     if b < 0:
         return None
     since = str(entries[b].get("timestamp") or "")[:19] + "Z"
+    since_s = since[:19]
     session = str(payload.get("session_id") or "")
-    reasons = []
+    rows = read_jsonl(log_path()) if log_rows is None else log_rows
+    mode, mode_note = w_follow.read_mode()
+    cloud = w_follow.is_cloud()
+    facts = w_follow.turn_facts(entries, b)
+    all_facts = w_follow.turn_facts(entries, -1)        # whole session: lens-4 joins
+    ev = {"session": session, "mode": mode, "mode_note": mode_note, "cloud": cloud,
+          "facts": facts, "required": [], "always": [], "triggers": []}
+
+    # --- checks that block today, mode or no mode ------------------------------
     n = unbacked_overrules(session, since, overrules_path) if session and len(since) == 20 else 0
     if n:
-        reasons.append(
+        ev["always"].append(
             f"Wince overruled {n} verdict(s) this turn without a receipt that holds up "
             f"(overrule_gate.py logged them as unbacked). Do not pass those verdicts on as "
             f"Wince's findings: tell Garrett in one line which ones are unbacked, or re-run "
             f"Wince on the W's full output.")
-    rows = read_jsonl(log_path()) if log_rows is None else log_rows
-    owed = unfiled_grades(entries, rows, session) if session else 0
-    if owed:
-        reasons.append(
-            f"{owed} Wince grade(s) finished in this session after the grade register "
-            f"was last written. Record them in Skyne's register (python3 "
-            f"scripts/wince_grades.py add ...; one command can record several), so a "
-            f"grade that changed nothing still leaves a trace (RULED 2026-10-14). If a "
-            f"Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
+    legacy = cloud     # the cloud keeps the old name-in-a-command filed-check
+    if legacy:
+        owed = unfiled_grades(entries, rows, session) if session else 0
+        if owed:
+            ev["always"].append(
+                f"{owed} Wince grade(s) finished in this session after the grade register "
+                f"was last written. Record them in Skyne's register (python3 "
+                f"scripts/wince_grades.py add ...; one command can record several), so a "
+                f"grade that changed nothing still leaves a trace (RULED 2026-10-14). If a "
+                f"Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
+            ev["triggers"].append("unfiled")
+    elif session:
+        owed = owed_filings(entries, rows, session, all_facts, str(payload.get("cwd") or ""))
+        if owed:
+            tagged = [o for o in owed if o.get("loop")]
+            plain = [o for o in owed if not o.get("loop")]
+            bits = []
+            if plain:
+                bits.append(f"{len(plain)} Wince grade(s)")
+            if tagged:
+                bits.append(f"{len(tagged)} red-team lens-4 run(s) (loop "
+                            f"{', '.join(sorted({o['loop'] for o in tagged}))})")
+            ev["always"].append(
+                f"{' and '.join(bits)} finished in this session with no filing from THIS session "
+                f"after it. File each one: `python3 scripts/wince_grades.py queue ...` (one command "
+                f"per finish; /handoff flushes the queue into a PR)"
+                + (", and for a red-team lens-4 run `python3 scripts/redteam_rounds.py queue ...` "
+                   "for its loop (a grade row does not count for it)" if tagged else "")
+                + ". Naming the script in a command no longer counts: the row has to reach the "
+                  "queue. If a Wince run was not a graded pass, say \"no grade to file: <why>\" "
+                  "in one line.")
+            ev["triggers"].append("unfiled")
+
+    # --- the agent-W trigger (as before) ----------------------------------------
     order = from_log(rows, session, since) if session and len(since) == 20 else []
     source = "w_ran log"
     if not order:
         order, source = from_transcript(entries, b), "transcript"
     ws = unfollowed(order)
     if ws:
-        reasons.append(refusal(ws, source))
-    # One refusal a turn is all a Stop hook gets (stop_hook_active lets the
-    # next one through), so both debts go in it or the second is dropped.
-    return {"decision": "block", "reason": " ALSO: ".join(reasons)} if reasons else None
+        ev["always"].append(refusal(ws, source))
+        ev["triggers"].append("agent-w")
+
+    # --- the NEW triggers (label, publish), under the switch --------------------
+    labels = facts["labels"] - {"Wince"}
+    pubs = facts["publishes"]
+    first_last = [facts["first_text"], facts["last_text"]]
+    ev["labeled"] = bool(labels)
+    ev["claude_wrote"] = bool(facts["writes"]) and any(CLAUDE_LABEL.match(t) for t in first_last)
+    why = []
+    if labels:
+        why.append("a reply labeled " + "/".join(sorted(f"{x}:" for x in labels)))
+        ev["triggers"].append("label")
+    if pubs:
+        why.append("a publish (" + ", ".join(sorted({n_ for _, n_ in pubs})) + ")")
+        ev["triggers"].append("publish")
+    wren_owed = False
+    if why:
+        import wren_gate
+        wren_owed = wren_gate.wren_owed(facts, entries, b)
+        wren_runs = agent_runs(entries, rows, session, "wren", all_facts)
+        wren_done = [r["finish"] for r in wren_runs if r["finish"] >= since_s]
+        wren_last = wren_done[-1] if wren_done else ""
+        need = max(w_follow.last_work_ts(facts), wren_last)
+        mine = [r["finish"] for r in agent_runs(entries, rows, session, CRITIC, all_facts)
+                if r["finish"] >= since_s]
+        satisfied = any(f >= max(need, since_s) for f in mine)
+        ev["wren_owed"] = wren_owed
+        ev["satisfied"] = satisfied
+        if not satisfied:
+            ev["required"].append(
+                "W follow-up (R5/R9, enforced from day one): this turn has "
+                + " and ".join(why) + f", and no `wince` agent run has finished since "
+                f"{'the work was last changed' if not wren_owed else 'the work was made and Wren tried it'}. "
+                + ("Run the `wren` agent first (he tries what was made, the lazy way), then ONE "
+                   "`wince` pass over the work AND Wren's report. " if wren_owed else
+                   "Run the `wince` agent (load-house-rules:wince) on the work before replying: "
+                   "grade the OUTPUT first, work back to the process where it finds a problem. ")
+                + "A \"Wince:\" label is not a review; only a run of the agent counts. "
+                  "Wince grades and names problems, it never rewrites. If the work was "
+                  "answered in a few words and nothing was made, say so plainly; the switch to "
+                  "stop these is `log` in ~/.claude/skyne/w-follow-mode.")
+    if facts["unknown_figma"]:
+        ev["note_figma"] = (f"Unknown Figma tool(s) used: {', '.join(sorted(set(facts['unknown_figma'])))}. "
+                            f"Classify them in .claude/hooks/figma-tools.json (write/read/excluded) "
+                            f"so a publish through them triggers the follow-up.")
+    return ev
+
+
+def decide(payload: dict, log_rows: list[dict] | None = None,
+           overrules_path: str | None = None, log_it: bool = True) -> dict | None:
+    ev = evaluate(payload, log_rows, overrules_path)
+    if ev is None:
+        return None
+    enforce_new = ev["mode"] == "enforce" and w_follow.cloud_enforces()
+    reasons = list(ev["always"])
+    if enforce_new:
+        reasons += ev["required"]
+    out = None
+    action = "quiet"
+    if reasons:
+        # One refusal a turn is all a Stop hook gets (stop_hook_active lets the
+        # next one through), so every debt goes in it or the next is dropped.
+        extra = [x for x in (ev["mode_note"], ev.get("note_figma")) if x]
+        out = {"decision": "block", "reason": " ALSO: ".join(reasons + extra)}
+        action = "refused"
+    elif ev["required"]:
+        action = "log-would-refuse"
+    elif ev["triggers"]:
+        action = "satisfied"
+    if payload.get("stop_hook_active"):
+        if out:
+            action = "released"
+        out = None
+    if log_it:
+        w_follow.log_row({"gate": "wince", "action": action, "mode": ev["mode"],
+                          "cloud": ev["cloud"], "session_id": ev["session"],
+                          "triggers": sorted(set(ev["triggers"])),
+                          "owed_new": bool(ev["required"]), "labeled": ev["labeled"],
+                          "claude_wrote": ev["claude_wrote"],
+                          "unknown_figma": sorted(set(ev["facts"]["unknown_figma"]))})
+        if ev["mode"] == "enforce" and ev["session"] and not ev["cloud"]:
+            w_follow.record_golive()
+    return out
+
 
 
 def main() -> int:
@@ -320,6 +581,15 @@ def self_test() -> int:
     import subprocess
     import tempfile
     ran, fails = [], []
+    _scratch = tempfile.mkdtemp(prefix="wince-gate-test-")
+    for _k, _v in (("SKYNE_W_FOLLOW_LOG", "w-follow.jsonl"), ("SKYNE_W_FOLLOW_MODE", "mode"),
+                   ("SKYNE_W_FOLLOW_GOLIVE", "golive.json"), ("SKYNE_GRADES_QUEUE", "gq.jsonl"),
+                   ("SKYNE_ROUNDS_QUEUE", "rq.jsonl")):
+        os.environ[_k] = os.path.join(_scratch, _v)
+    os.environ["SKYNE_EXTRA_ROOTS"] = os.path.join(_scratch, "none")
+    # Everything up to the "STAGE 2" marker below is the cloud / legacy path: the old
+    # name-in-a-command filed-check, which the cloud keeps. Stage-2 tests clear this.
+    os.environ["CLAUDE_CODE_REMOTE"] = "true"
 
     def check(ok, label):
         ran.append(label)
@@ -353,12 +623,12 @@ def self_test() -> int:
         # never read this machine's real overrule log during a self-test
         os.environ["SKYNE_OVERRULES_LOG"] = os.path.join(d, "no-such-log.jsonl")
 
-        def transcript(*entries):
+        def transcript(*entries, session_id="s1"):
             p = os.path.join(d, "t.jsonl")
             with open(p, "w", encoding="utf-8") as f:
                 for e in entries:
                     f.write(json.dumps(e) + "\n")
-            return {"transcript_path": p, "session_id": "s1"}
+            return {"transcript_path": p, "session_id": session_id}
 
         check(decide(transcript(user, call("wander"), tool_result, call("wince")), []) is None,
               "transcript: W then Wince allows")
@@ -506,6 +776,225 @@ def self_test() -> int:
         r = subprocess.run([sys.executable, __file__], input="not json",
                            capture_output=True, text=True, env=env)
         check(r.returncode == 0 and r.stdout == "", "garbage stdin exits 0, silently")
+
+
+        # ================= STAGE 2 (PC): label + publish triggers, content-match filing =======
+        os.environ.pop("CLAUDE_CODE_REMOTE", None)
+        t = "2026-11-17T15:00:%02d.000Z"
+        u2 = {"type": "user", "timestamp": t % 0, "message": {"content": "go"}}
+
+        def says(sec, text):
+            return {"type": "assistant", "timestamp": t % sec,
+                    "message": {"content": [{"type": "text", "text": text}]}}
+
+        def tu(sec, name, inp, tid):
+            return {"type": "assistant", "timestamp": t % sec, "message": {"content": [
+                {"type": "tool_use", "id": tid, "name": name, "input": inp}]}}
+
+        wr = lambda sec: tu(sec, "Write", {"file_path": "C:\\x\\a.py", "content": "1"}, f"w{sec}")
+        art = lambda sec: tu(sec, "Artifact", {"file_path": "C:\\x\\page.html", "icon": "chart",
+                                               "description": "d"}, f"a{sec}")
+
+        def agent(sec, who, tid, prompt="do it"):
+            return tu(sec, "Agent", {"subagent_type": who, "prompt": prompt}, tid)
+
+        def sync_back(sec, tid, text="done"):
+            return {"type": "user", "timestamp": t % sec, "toolUseResult": {"status": "completed"},
+                    "message": {"content": [{"type": "tool_result", "tool_use_id": tid,
+                                             "content": [{"type": "text", "text": text}]}]}}
+
+        def async_back(sec, tid, agent_id):
+            return {"type": "user", "timestamp": t % sec,
+                    "toolUseResult": {"isAsync": True, "status": "async_launched", "agentId": agent_id},
+                    "message": {"content": [{"type": "tool_result", "tool_use_id": tid, "content": [
+                        {"type": "text", "text": "Async agent launched successfully.\nagentId: " + agent_id}]}]}}
+
+        def stop_row(w, aid, utc, sess="s1"):
+            return {"event": "stop", "w": w, "agent_id": aid, "session_id": sess, "utc": utc}
+
+        def flog():
+            return read_jsonl(os.environ["SKYNE_W_FOLLOW_LOG"])
+
+        def queue_row(path, **kw):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(kw) + "\n")
+
+        def go(*entries, log=(), **kw):
+            return decide(transcript(*entries, **kw), list(log))
+
+        # the label trigger
+        out = go(u2, says(1, "Wistin: built it."), wr(2), says(3, "Wistin: done."))
+        check(bool(out) and "W follow-up" in out["reason"] and "labeled Wistin:" in out["reason"],
+              "PLANTED: a Wistin-labeled reply with no Wince run is refused")
+        check(flog()[-1]["action"] == "refused" and flog()[-1]["labeled"] is True,
+              "the refusal is logged with its trigger")
+        ok_run = [agent(4, "wince", "wc1"), sync_back(6, "wc1")]
+        check(go(u2, says(1, "Wistin: built it."), wr(2), *ok_run, says(7, "Wistin: done."),
+                 log=[]) is not None,
+              "PLANTED: a synchronous Wince that came back owes its filing, so work-then-Wince "
+              "without filing is still refused (filed-check)")
+        queue_row(os.environ["SKYNE_GRADES_QUEUE"], session="s1", queued_utc="2026-11-17T15:00:08Z",
+                  subject="x", key="k1")
+        check(go(u2, says(1, "Wistin: built it."), wr(2), *ok_run, says(7, "Wistin: done.")) is None
+              and flog()[-1]["action"] == "satisfied",
+              "work, then Wince, the grade queued under THIS session, then 'Wistin:' passes")
+        check(go(u2, says(1, "Wistin: built it."), *ok_run, wr(7), says(8, "Wistin: done.")) is not None,
+              "PLANTED: a Wince run BEFORE the last write does not count")
+        out = go(u2, says(1, "Wince: I reviewed it, it is fine."))
+        check(out is None, "a 'Wince:' label alone triggers nothing (no work to follow)")
+        out = go(u2, says(1, "Wistin: built it."), wr(2), says(3, "Wince: it looks great."))
+        check(bool(out) and "W follow-up" in out["reason"],
+              "PLANTED: a 'Wince:' label never satisfies the follow-up (only an agent run does)")
+        check(go(u2, says(1, "Claude: here is a quick answer."), says(2, "Claude: and the follow-up.")) is None
+              and flog()[-1]["action"] == "quiet",
+              "a quiet Claude: Q&A turn triggers nothing")
+        out = go(u2, says(1, "Weir: I would choose the second."))
+        check(bool(out), "PLANTED: a W label on a plain Q&A reply owes a Wince run (R9, wide trial)")
+        # publish
+        out = go(u2, art(2), says(3, "Here is the page."))
+        check(bool(out) and "a publish (Artifact)" in out["reason"],
+              "PLANTED: a real Artifact publish with no label is refused")
+        check(go(u2, tu(2, "Artifact", {"action": "publish", "asset": True, "url": "u", "file_path": "a.png"}, "p1"),
+                 says(3, "Uploaded.")) is None,
+              "an asset upload is not a publish")
+        fig = "mcp__a2e5608f-73d1-4432-84e6-22b3701e89d8__"
+        out = go(u2, tu(2, fig + "generate_diagram", {"name": "flow", "mermaidSyntax": "graph TD"}, "f1"),
+                 says(3, "Diagram made."))
+        check(bool(out), "PLANTED: a Figma generate_diagram triggers the follow-up")
+        out = go(u2, tu(2, fig + "get_screenshot", {"nodeId": "1:2"}, "f2"), says(3, "Looked."))
+        check(out is None, "a Figma get_screenshot (a read) does not")
+        out = go(u2, tu(2, fig + "totally_new_tool", {}, "f3"), says(3, "Weir: x"))
+        check(bool(out) and "Unknown Figma tool" in out["reason"],
+              "an unknown Figma tool is flagged in the refusal and the log")
+        check(flog()[-1]["unknown_figma"] == ["mcp__a2e5608f-73d1-4432-84e6-22b3701e89d8__totally_new_tool"]
+              or flog()[-1]["unknown_figma"], "the unknown tool name is in the log row")
+        # Wander agent run forces Wince (the agent-W path, as before)
+        out = go(u2, agent(2, "wander", "wd1"), sync_back(3, "wd1"), says(4, "Here is what Wander found."))
+        check(bool(out) and "Wander" in out["reason"], "a real Wander agent run forces Wince as before")
+        # haiku-mechanic is not a W
+        out = go(u2, agent(2, "haiku-mechanic", "hm1"), sync_back(3, "hm1"), says(4, "Moved the files."))
+        check(out is None, "a haiku-mechanic agent run forces nothing (R8)")
+        # Wren first, then ONE Wince pass after Wren
+        steps_wren_then_wince = [u2, says(1, "Wistin: built it."), wr(2), agent(3, "wren", "wn1"), sync_back(5, "wn1"),
+                                 agent(6, "wince", "wc2"), sync_back(8, "wc2"), says(9, "Wistin: done.")]
+        queue_row(os.environ["SKYNE_GRADES_QUEUE"], session="s1", queued_utc="2026-11-17T15:00:09Z", key="k2")
+        check(go(*steps_wren_then_wince) is None, "Wren first, then Wince after it, filed: passes")
+        steps_wince_then_wren = [u2, says(1, "Wistin: built it."), wr(2), agent(3, "wince", "wc3"), sync_back(5, "wc3"),
+                                 agent(6, "wren", "wn2"), sync_back(8, "wn2"), says(9, "Wistin: done.")]
+        out = go(*steps_wince_then_wren)
+        check(bool(out) and "Wren tried it" in out["reason"],
+              "PLANTED: Wince that finished BEFORE Wren's try does not grade Wren's report")
+        # same-second tie counts as after
+        tie = [u2, says(1, "Wistin: x"), wr(2), agent(3, "wince", "wc4"), sync_back(2, "wc4"), says(9, "Wistin: done.")]
+        check(go(*tie) is None, "a Wince run finishing in the same second as the last edit counts as after")
+
+        # red-team lens 4: tagged, joined through the agentId, only a rounds row counts
+        queue_row(os.environ["SKYNE_ROUNDS_QUEUE"], session="s2", loop="L7", queued_utc="2026-11-17T15:00:20Z")
+        lens4 = [u2, says(1, "Weir: reviewing."),
+                 agent(2, "wince", "l4", "[red-team lens 4: L7] grade this deck"), async_back(3, "l4", "agentLens4")]
+        log4 = [stop_row("wince", "agentLens4", "2026-11-17T15:00:25Z", "s2")]
+        out = go(*lens4, says(16, "Weir: done."), log=log4, session_id="s2")
+        check(bool(out) and "lens-4" in out["reason"] and "L7" in out["reason"],
+              "PLANTED: a tagged lens-4 Wince run whose rounds row is dated BEFORE the finish is refused")
+        queue_row(os.environ["SKYNE_ROUNDS_QUEUE"], session="s2", loop="L7", queued_utc="2026-11-17T15:00:30Z")
+        check(go(*lens4, says(31, "Weir: done."), log=log4, session_id="s2") is None,
+              "lens 4 + a redteam_rounds row for its loop, after the run, passes with no refusal")
+        queue_row(os.environ["SKYNE_GRADES_QUEUE"], session="s3", queued_utc="2026-11-17T15:00:40Z", key="g3")
+        lens4_s3 = [u2, says(1, "Weir: reviewing."),
+                    agent(2, "wince", "l5", "[red-team lens 4: L8] grade"), async_back(3, "l5", "agentLens5")]
+        out = go(*lens4_s3, says(41, "Weir: done."), log=[stop_row("wince", "agentLens5", "2026-11-17T15:00:15Z", "s3")],
+                 session_id="s3")
+        check(bool(out) and "lens-4" in out["reason"],
+              "PLANTED: a tagged lens-4 run followed only by wince_grades queue/add is refused")
+
+        # the filed-check by CONTENT
+        qa = tmp_q = os.path.join(_scratch, "gq.jsonl")
+        os.unlink(qa)
+        graded = [u2, says(1, "Weir: reviewing."), agent(2, "wince", "g1"), sync_back(4, "g1")]
+        cmd_only = tu(6, "Bash", {"command": "python3 scripts/wince_grades.py queue --subject x"}, "b1")
+        out = go(*graded, cmd_only, says(7, "Weir: done."))
+        check(bool(out) and "wince_grades.py queue" in out["reason"],
+              "PLANTED: naming wince_grades in a command with no row in the queue is refused")
+        queue_row(qa, session="OTHER-CHAT", queued_utc="2026-11-17T15:00:05Z")
+        check(go(*graded, cmd_only, says(7, "Weir: done.")) is not None,
+              "PLANTED: another chat filing at the same moment does not count for this session")
+        queue_row(qa, session="s1", queued_utc="2026-11-17T15:00:03Z")
+        check(go(*graded, says(7, "Weir: done.")) is not None,
+              "PLANTED: a row from THIS session dated before the Wince finish does not count")
+        queue_row(qa, session="s1", queued_utc="2026-11-17T15:00:05Z")
+        check(go(*graded, says(7, "Weir: done.")) is None, "a row from this session after the finish counts")
+        two = [u2, says(1, "Weir: r"), agent(2, "wince", "g1"), sync_back(4, "g1"),
+               agent(5, "wince", "g2"), sync_back(7, "g2")]
+        out = go(*two, says(8, "Weir: done."))
+        check(bool(out) and out["reason"].count("1 Wince grade") >= 1,
+              "PLANTED: two Wince finishes and one filing leaves one owed (per-finish accounting)")
+        failed_queue = [u2, says(1, "Weir: r"), agent(2, "wince", "g1"), sync_back(4, "g1"),
+                        tu(5, "Bash", {"command": "python3 scripts/wince_grades.py queue --bad"}, "b2"),
+                        {"type": "user", "timestamp": t % 6, "toolUseResult": {"stdout": "refused: x"},
+                         "message": {"content": [{"type": "tool_result", "tool_use_id": "b2", "is_error": True,
+                                                  "content": "refused: pass should be 2"}]}}]
+        os.unlink(qa)
+        check(go(*failed_queue, says(7, "Weir: done.")) is not None,
+              "PLANTED: a failed `queue` call (refused, nothing queued) is refused here too")
+        check(go(*graded, says(7, "Weir: done.\nNo grade to file: it was a prose critique.")) is None,
+              "'no grade to file: <why>' after the finish still accounts for it")
+        queue_row(qa, session="s1", queued_utc="2026-11-17T15:00:05Z")
+
+        # a grade that was flushed and dropped from the queue is found in a register
+        os.unlink(qa)
+        reg = os.path.join(_scratch, "wince-grades.json")
+        with open(reg, "w", encoding="utf-8") as fh:
+            json.dump({"grades": [{"session": "s1", "filed_utc": "2026-11-17T15:00:05Z"}]}, fh)
+        os.environ["SKYNE_EXTRA_REGISTERS"] = reg
+        check(go(*graded, says(7, "Weir: done.")) is None,
+              "a filing that already reached a register (queue row dropped) still counts")
+        os.environ.pop("SKYNE_EXTRA_REGISTERS", None)
+        queue_row(qa, session="s1", queued_utc="2026-11-17T15:00:05Z")
+
+        # the switch: log mode logs the NEW triggers, the old blocks keep blocking (R10)
+        def set_mode(raw):
+            with open(os.environ["SKYNE_W_FOLLOW_MODE"], "wb") as fh:
+                fh.write(raw)
+        trig = [u2, says(1, "Wistin: x"), wr(2), says(3, "Wistin: y")]
+        for name, raw in (("plain", b"log"), ("UTF-8 BOM", b"\xef\xbb\xbflog\r\n"),
+                          ("UTF-16", "log\r\n".encode("utf-16"))):
+            set_mode(raw)
+            check(go(*trig) is None and flog()[-1]["action"] == "log-would-refuse" and flog()[-1]["mode"] == "log",
+                  f"switch written as {name}: the label trigger logs and refuses nothing")
+        check(go(u2, agent(2, "wander", "wd2"), sync_back(3, "wd2"), says(4, "found it")) is not None,
+              "log mode does not release the agent-W trigger (it blocks today, R10)")
+        set_mode(b"banana")
+        out = go(*trig)
+        check(bool(out) and "not 'enforce' or 'log'" in out["reason"],
+              "PLANTED: a garbage switch value enforces plus a visible line")
+        os.unlink(os.environ["SKYNE_W_FOLLOW_MODE"])
+
+        # cloud: new triggers log only
+        os.environ["CLAUDE_CODE_REMOTE"] = "true"
+        check(go(*trig) is None and flog()[-1]["cloud"] is True and flog()[-1]["action"] == "log-would-refuse",
+              "an attended-cloud-shaped env still only LOGS the new trigger (R12 is PC-only until confirmed)")
+        os.environ.pop("CLAUDE_CODE_REMOTE", None)
+
+        # released by stop_hook_active is logged
+        out = decide(dict(transcript(*trig), stop_hook_active=True), [])
+        check(out is None and flog()[-1]["action"] == "released", "released-by-stop_hook_active is logged")
+        check(os.path.exists(os.environ["SKYNE_W_FOLLOW_GOLIVE"]), "the go-live date was recorded")
+        # a call with no new facts still writes its heartbeat row
+        n0 = len(flog())
+        go(u2, says(1, "Claude: hi"))
+        check(len(flog()) == n0 + 1 and flog()[-1]["action"] == "quiet", "a quiet turn still writes a heartbeat row")
+
+        # replay a REAL transcript from this PC through the gate: it must not crash and must answer
+        real = os.environ.get("SKYNE_REPLAY_TRANSCRIPT")
+        if real and os.path.exists(real):
+            try:
+                decide({"transcript_path": real, "session_id": "replay"}, [], log_it=False)
+                check(True, "a real local transcript replays through the gate without error")
+            except Exception as exc:  # noqa: BLE001
+                check(False, f"a real transcript replays without error ({exc})")
+        for k in ("SKYNE_W_FOLLOW_LOG", "SKYNE_W_FOLLOW_MODE", "SKYNE_W_FOLLOW_GOLIVE",
+                  "SKYNE_GRADES_QUEUE", "SKYNE_ROUNDS_QUEUE", "SKYNE_EXTRA_ROOTS"):
+            os.environ.pop(k, None)
 
     print(f"\nwince_gate self-test: {len(ran) - len(fails)} of {len(ran)} passed")
     return 1 if fails else 0
