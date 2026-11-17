@@ -32,11 +32,7 @@ KNOWN_HELPERS = {
     "reply_notes.py",        # registered, listed only if the pattern changes
 }
 # Known gaps found on 2026-11-17. The reporter must find no MORE than these.
-KNOWN_GAPS = {
-    "model_switch.py has a self-test but ci.yml never runs it",
-    "session_start.py has a self-test but ci.yml never runs it",
-    "solved_guard.py has a self-test but ci.yml never runs it",
-}
+KNOWN_GAPS = set()  # the three un-run self-tests were wired into ci.yml 2026-11-17
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
