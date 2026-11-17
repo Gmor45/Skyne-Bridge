@@ -17,5 +17,5 @@ Wince grades it (RULED 2026-10-17).
 2. **Read `<clone>/.claude/skills/research/SKILL.md` in full and follow it.**
 3. **The repo file wins on any disagreement.**
 
-Same reason as its siblings (`handoff`, `gartera`, `flow`): one copy, fetched
+Same reason as its siblings (`handoff`, `battlemap`): one copy, fetched
 live, nothing to drift.

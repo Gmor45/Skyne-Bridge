@@ -10,8 +10,13 @@ either. Both live in the private `Gmor45/Gartera-Vault` repo.
 
 ## Do this, in order
 
-1. **If the vault is not already cloned this session, run the `gartera-connect`
-   pointer first.**
+1. **If the vault is not already cloned this session, clone it:**
+
+   ```
+   git clone https://github.com/Gmor45/Gartera-Vault.git ~/vault-work/Gartera-Vault
+   # already present? then:
+   git -C ~/vault-work/Gartera-Vault pull --ff-only
+   ```
 
 2. **Read the real procedure from the clone, in full, and follow it exactly:**
 
@@ -29,8 +34,9 @@ either. Both live in the private `Gmor45/Gartera-Vault` repo.
 
 ## Why this file is this short
 
-Same reason as its siblings (`gartera`, `gartera-connect`, `flow`,
-`full-dive`): one copy, fetched live, nothing to drift.
+Same reason as its siblings (`handoff`, `research`): one copy, fetched live,
+nothing to drift. (The `gartera`, `gartera-connect`, `flow` and `full-dive`
+pointers were removed 2026-11-16; the clone step is inlined above.)
 
 **This one is the clearest case of why.** Until 2026-09-12 the 16 KB skill
 lived only in `~/.claude/skills/`, in no repo — while the code it describes and

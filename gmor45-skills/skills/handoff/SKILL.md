@@ -40,8 +40,7 @@ the private `Gmor45/Skyne` repo at `.claude/skills/handoff/SKILL.md`.
 
 ## Why this file is this short, and why it used to be long
 
-Same reason as its siblings (`gartera`, `gartera-connect`, `flow`,
-`full-dive`): the procedure lives in one place, fetched live, so it has no
+Same reason as its siblings (`battlemap`, `research`): the procedure lives in one place, fetched live, so it has no
 second copy to drift out of date.
 
 **This one earned the pointer the hard way.** Until 2026-09-12 there was an
