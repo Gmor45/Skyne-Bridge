@@ -46,10 +46,15 @@ import os
 import sys
 import tempfile
 
-# The family, in the card's order (Skyne data/skyne-family.json) -- eight
-# since Wren joined on 2026-10-07, nine since Wince joined on 2026-10-11.
-# ci.yml checks this tuple against reply_gate.SPEAKER_LABELS.
-W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren", "wince")
+# FOLLOWED: the nine labels Wince follows (Skyne data/skyne-family.json) --
+# eight since Wren joined on 2026-10-07, nine since Wince joined on
+# 2026-10-11. AGENT_FILES: the agents that exist as files in .claude/agents/
+# since 2026-11-16 (R2/R8). haiku-mechanic is an agent but NOT a W, so
+# member("haiku-mechanic") is None and Wince never follows it. ci.yml checks
+# FOLLOWED against reply_gate.SPEAKER_LABELS and AGENT_FILES against the disk.
+FOLLOWED = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren", "wince")
+AGENT_FILES = ("wince", "wren", "wander", "haiku-mechanic")
+W_AGENTS = FOLLOWED   # old name, kept for readers that import it
 
 
 def log_path() -> str:
@@ -60,7 +65,7 @@ def log_path() -> str:
 def member(agent_type) -> str | None:
     """'load-house-rules:warden' / 'Warden' / 'warden' -> 'warden'; anything else -> None."""
     bare = str(agent_type or "").strip().strip("^$").split(":")[-1].lower()
-    return bare if bare in W_AGENTS else None
+    return bare if bare in FOLLOWED else None
 
 
 def row_for(payload: dict) -> dict | None:
@@ -114,6 +119,11 @@ def self_test() -> int:
     check(member("Weir") == "weir", "case does not matter")
     check(member("Explore") is None and member("haiku-mechanic") is None,
           "an agent that is not a family member is not credited to a W")
+    check(set(AGENT_FILES) == {"wince", "wren", "wander", "haiku-mechanic"} and len(FOLLOWED) == 9
+          and set(AGENT_FILES) - set(FOLLOWED) == {"haiku-mechanic"},
+          "the ruled lists: nine labels followed, four agent files, haiku-mechanic the only non-W")
+    check(member("load-house-rules:wistin") == "wistin",
+          "an archived W is still a followed label (its work is graded under the label)")
     check(member("") is None and member(None) is None, "no agent type is no member")
 
     start = row_for({"hook_event_name": "SubagentStart", "agent_type": "load-house-rules:warden",

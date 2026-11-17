@@ -234,10 +234,17 @@ SYSTEM = (
     '"w":"wistin|ward|weir|wander|warden|whittle|wick|wren|wince|none","why":"<=12 words"}'
 )
 
-# The Skyne Family members, in the card's order (eight since 2026-10-07, when
-# Wren joined; nine since 2026-10-11, when Wince joined). Each is an agent in
-# .claude/agents/<id>.md; ci.yml checks this tuple against SPEAKER_LABELS.
-W_AGENTS = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren", "wince")
+# The Skyne Family has nine members, and they are LABELS (FOLLOWED): the
+# router may name any of the nine as the bucket for a job. Only some of them
+# are also AGENT FILES in .claude/agents/ (RULED 2026-11-16, R2/R8): wince,
+# wren and wander, plus haiku-mechanic, which is not a W. The other six
+# (wistin, ward, weir, warden, whittle, wick) were archived to
+# .claude/agents-archive/ -- their work is answered by the main session under
+# the label. ci.yml checks FOLLOWED against SPEAKER_LABELS and AGENT_FILES
+# against the files on disk.
+FOLLOWED = ("wistin", "ward", "weir", "wander", "warden", "whittle", "wick", "wren", "wince")
+AGENT_FILES = ("wince", "wren", "wander", "haiku-mechanic")
+W_AGENTS = FOLLOWED   # old name, kept so route_eval and other readers keep working
 W_VERBS = {"wistin": "makes", "ward": "keeps", "weir": "tees up a decision",
            "wander": "looks past the ask", "warden": "checks",
            "whittle": "decides what to retire", "wick": "shows",
@@ -714,18 +721,27 @@ def decide(prompt: str, cur_model, cur_effort, state: dict, grade_fn,
 
 
 def route_line(row: dict) -> str | None:
-    """The W router's one line, or None. Never on a block, never on a small job."""
+    """The W router's one line, or None. Never on a block, never on a small job.
+
+    An AGENT W (one with a file in AGENT_FILES) is handed to its agent. The
+    other Ws have no agent: the line tells the main session to answer under
+    the label, because naming a subagent that does not exist would fail.
+    """
     w = row.get("w")
-    if w not in W_AGENTS or row.get("action") not in ROUTE_ACTIONS:
+    if w not in FOLLOWED or row.get("action") not in ROUTE_ACTIONS:
         return None
     if row.get("size") not in ROUTE_SIZES:
         return None
+    why = "Haiku's call, not a ruling: " + str(row.get("why") or "no reason given")
+    if w in AGENT_FILES:
+        return ("[skyne-route] This is " + w.capitalize() + " work (" + W_VERBS[w] + "). "
+                "Hand the job to the `" + w + "` agent (Agent tool, subagent_type `" + w
+                + "`, or `load-house-rules:" + w + "` where it is plugin-scoped) and relay "
+                "what it returns, labelled `" + w.capitalize() + ":`. If the main session "
+                "should do it itself, say why in one line. " + why)
     return ("[skyne-route] This is " + w.capitalize() + " work (" + W_VERBS[w] + "). "
-            "Hand the job to the `" + w + "` agent (Agent tool, subagent_type `" + w
-            + "`, or `load-house-rules:" + w + "` where it is plugin-scoped) and relay "
-            "what it returns, labelled `" + w.capitalize() + ":`. If the main session "
-            "should do it itself, say why in one line. Haiku's call, not a ruling: "
-            + str(row.get("why") or "no reason given"))
+            + w.capitalize() + " is a label, not an agent: do the job in the main session "
+            "and answer it under the `" + w.capitalize() + ":` label. " + why)
 
 
 def add_route(out: dict | None, row: dict) -> dict | None:
@@ -1007,8 +1023,15 @@ def self_test() -> int:
     r, s_, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("warden"))
     o = add_route(o, r)
     ctx = (o or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
-    check(r.get("routed") is True and "`warden` agent" in ctx and "Warden:" in ctx,
-          "a matched medium Warden job is routed to the warden agent")
+    check(r.get("routed") is True and "`warden` agent" not in ctx and "is a label, not an agent" in ctx
+          and "Warden:" in ctx,
+          "a matched medium Warden job (no agent file) is told to answer under the label")
+    r, _, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("wander"))
+    o = add_route(o, r)
+    ctx = (o or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+    check(r.get("routed") is True and "`wander` agent" in ctx and "Wander:" in ctx,
+          "a matched medium Wander job (has an agent file) is routed to the wander agent")
+    r, _, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("warden"))
     check(s_.get("last_grade", {}).get("w") == "warden", "the bucket is remembered for a bare 'go'")
     r, _, o = decide(msg, "claude-sonnet-5", "medium", {}, wfix("warden", size="small"))
     check(add_route(o, r) is None and r["routed"] is False, "a small job is never routed (a subagent costs more)")
@@ -1024,9 +1047,11 @@ def self_test() -> int:
     r, _, o = decide("go", "claude-sonnet-5", "medium", held, wfix("ward"))
     o = add_route(o, r)
     ctx = o["hookSpecificOutput"]["additionalContext"]
-    check("rename the files" in ctx and "`ward` agent" in ctx,
-          "a resumed message keeps its held text AND gains the route line")
-    for w in W_AGENTS:
+    check("rename the files" in ctx and "Ward:" in ctx and "`ward` agent" not in ctx,
+          "a resumed message keeps its held text AND gains the route line (label, no agent)")
+    check(set(AGENT_FILES) - set(FOLLOWED) == {"haiku-mechanic"},
+          "every agent file is a family member except haiku-mechanic, which is not a W")
+    for w in FOLLOWED:
         check(w in W_VERBS, f"{w} has a verb for the route line")
         # A member the grader is never offered can never be routed to, and
         # nothing else would notice: decide() maps an unknown bucket to none.
