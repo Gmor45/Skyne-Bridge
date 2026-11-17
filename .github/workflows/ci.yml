@@ -37,7 +37,7 @@ jobs:
           python-version: "3.11"
       - name: Gate self-test
         run: python3 .claude/hooks/reply_gate.py --self-test
-      - name: Every Skyne Family member has an agent, and nothing else does
+      - name: The nine family labels agree everywhere, and the agent files are exactly the ruled four
         run: |
           python3 - <<'PY'
           import re, sys
@@ -45,23 +45,30 @@ jobs:
           sys.path.insert(0, ".claude/hooks")
           from reply_gate import SPEAKER_LABELS
           members = {l.lower() for l in SPEAKER_LABELS if l != "Claude"}
+          import tier_gate, w_ran
+          # FOLLOWED = the nine labels. AGENT_FILES = the files in .claude/agents/
+          # (wince, wren, wander + haiku-mechanic, which is not a W). RULED 2026-11-16.
+          for name, tup in (("tier_gate.FOLLOWED", tier_gate.FOLLOWED), ("w_ran.FOLLOWED", w_ran.FOLLOWED)):
+              if set(tup) != members:
+                  print(f"{name} does not match the labels: {sorted(tup)} vs {sorted(members)}")
+                  sys.exit(1)
+          for name, tup in (("tier_gate.AGENT_FILES", tier_gate.AGENT_FILES), ("w_ran.AGENT_FILES", w_ran.AGENT_FILES)):
+              if set(tup) != {"wince", "wren", "wander", "haiku-mechanic"}:
+                  print(f"{name} is not the ruled four: {sorted(tup)}")
+                  sys.exit(1)
           agents = {}
           for f in Path(".claude/agents").glob("*.md"):
-              m = re.search(r"^name:\s*(\S+)", f.read_text(), re.M)
+              m = re.search(r"^name:\s*(\S+)", f.read_text(encoding="utf-8"), re.M)
               agents[f.stem] = m.group(1) if m else None
-          family = {k for k in agents if k in members}
-          import tier_gate, w_ran
-          for name, tup in (("tier_gate.W_AGENTS", tier_gate.W_AGENTS), ("w_ran.W_AGENTS", w_ran.W_AGENTS)):
-              if set(tup) != members:
-                  print(f"{name} does not match the family: {sorted(tup)} vs {sorted(members)}")
-                  sys.exit(1)
           bad = [k for k, v in agents.items() if v != k]
-          missing = sorted(members - family)
-          print(f"{len(members)} family members, {len(family)} have an agent")
-          # Nine since 2026-10-11 (Wince). Typed on purpose: a dropped member
-          # in BOTH SPEAKER_LABELS and the agents dir must still fail here.
-          if missing or bad or len(members) != 9:
-              print("missing agent(s):", missing, "| name != filename:", bad, "| members:", sorted(members))
+          extra = sorted(set(agents) - set(tier_gate.AGENT_FILES))
+          missing = sorted(set(tier_gate.AGENT_FILES) - set(agents))
+          archived = sorted(p.stem for p in Path(".claude/agents-archive").glob("*.md") if p.stem != "README")
+          print(f"{len(members)} labels, {len(agents)} agent files, {len(archived)} archived")
+          # Typed on purpose: a dropped label in BOTH SPEAKER_LABELS and the lists must still fail.
+          if missing or extra or bad or len(members) != 9 or len(archived) != 6:
+              print("missing file(s):", missing, "| unlisted file(s):", extra, "| name != filename:", bad,
+                    "| labels:", sorted(members), "| archived:", archived)
               sys.exit(1)
           PY
       - name: Reply notes self-test (reply-gate warnings delivered next turn, RULED 2026-11-09)

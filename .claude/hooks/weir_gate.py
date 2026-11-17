@@ -19,7 +19,7 @@ A reply is refused ONCE when all three hold:
      pick", "I recommend", "my recommendation", "go with").
 The refusal tells the session to answer in Weir's shape -- the question in
 one line, the options with what each costs, and a pick with the reason -- or
-to hand the job to the `weir` agent. It never makes the choice for him.
+to answer it under the Weir label. It never makes the choice for him.
 
 A question with ONE option ("want me to merge it?") is not a menu and is left
 alone. A menu with a pick is not a failure. A reply that is mostly work with a
@@ -52,7 +52,7 @@ RULED_MSG = ("Weir's job, undone: this reply ends on a question to Garrett and l
              "not want choices organised, he wants the call made. Re-send ONLY the decision, "
              "in Weir's shape: (1) the question in one line, (2) the real options, each with "
              "what it costs, (3) your pick and the reason. You still do not make the call -- "
-             "he does. Or hand it to the `weir` agent. If this was not a decision, say so in "
+             "he does. Or answer it under the Weir label. If this was not a decision, say so in "
              "one line.")
 
 

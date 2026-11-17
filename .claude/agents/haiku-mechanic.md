@@ -1,6 +1,6 @@
 ---
 name: haiku-mechanic
-description: Confirmed mechanical work only — moving or renaming files, running an already-written script, formatting, applying an already-decided edit, or sweeping one identical change across many files. These are house-rules rule 2's own "down" tells, verbatim, not a new judgment call. Do NOT route anything here that needs design, unresolved ambiguity, or a call only Garrett or the main session can make — that stays on the current model.
+description: "Mechanical work, already decided: rename or move files, run a script that is already written, format code, apply one exact edit everywhere it matches, or sweep one identical change across many files. Send it when the instruction is precise and no judgment is left. NOT for design, anything ambiguous, or a call only Garrett or the main session can make. Not a W; Wince does not grade it."
 tools: Read, Edit, Write, Bash, Glob, Grep
 model: haiku
 ---

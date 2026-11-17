@@ -1,6 +1,6 @@
 {
   "_why": "Fixed cases tier_gate.py must pass, kept OUT of tier_gate.py on purpose. Garrett, 2026-10-10: Claude may edit its own tier gate, but must not be able to grade itself -- so the cases that define a correct gate live here, where the narrow permission rule Edit(**/.claude/hooks/tier_gate.py) does not reach. Changing this file goes through the auto-mode classifier or Garrett. Run by tier_gate_golden.py in CI.",
-  "min_self_test_checks": 69,
+  "min_self_test_checks": 74,
   "cases": [
     {"name": "a subagent hand-back is never graded or held",
      "prompt": "<agent-message from=\"a75f0866e1d97c336\">[Subagent hand-back] Wander: ranked options for the design canvas tooling and tradeoffs",
