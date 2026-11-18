@@ -111,6 +111,10 @@ jobs:
         run: python3 .claude/hooks/wince_gate.py --self-test
       - name: Wren gate self-test (Wren tries what a maker builds, RULED 2026-10-17)
         run: python3 .claude/hooks/wren_gate.py --self-test
+      - name: W follow-up shared parts self-test (switch encodings, publish detection, filings, day-14 date)
+        run: python3 .claude/hooks/w_follow.py --self-test
+      - name: W follow-up cost tracker self-test (R19, subagent transcripts deduped by model and type)
+        run: python3 .claude/hooks/w_cost.py --self-test
       - name: Overrule gate self-test (no overrule without a real receipt)
         run: python3 .claude/hooks/overrule_gate.py --self-test
       - name: Miss gate self-test (a callout ends in a filed miss)

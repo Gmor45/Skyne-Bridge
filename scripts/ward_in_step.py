@@ -30,6 +30,7 @@ KNOWN_HELPERS = {
     "delegate_reminder.py",  # retired 2026-09-23, kept as a silent tombstone
     "route_eval.py",         # exam scorer for the W router, run by CI
     "reply_notes.py",        # registered, listed only if the pattern changes
+    "w_cost.py",             # R19 cost tracker, imported lazily by w_follow and run by SessionStart in the background
 }
 # Known gaps found on 2026-11-17. The reporter must find no MORE than these.
 KNOWN_GAPS = set()  # the three un-run self-tests were wired into ci.yml 2026-11-17
