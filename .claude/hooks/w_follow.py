@@ -459,19 +459,32 @@ def _session_rows(rows: list[dict], session: str) -> list[dict]:
     return [r for r in rows if r.get("session") == session]
 
 
+def _filing_id(kind: str, r: dict, t: str) -> tuple:
+    """One filing, wherever it is seen. The same row sits in the queue, on
+    origin/main, and in every worktree's copy of the register: it is ONE filing
+    (W red team round 2: one session's 6 grades were counted 24 times, so
+    sessions short of a filing passed). `key` when the row has one; otherwise
+    what the row is plus when it was filed."""
+    if r.get("key"):
+        return (kind, r["key"])
+    if kind == "g":
+        return (kind, r.get("subject"), r.get("pass"), t)
+    return (kind, r.get("loop"), r.get("round"), t)
+
+
 def filings(session: str, extra_registers: list[str] | None = None) -> dict:
     """Content-matched filings for THIS session: {'grades': [ts...], 'rounds': {loop: [ts...]}}.
     Sources: both local queues, plus any register files named (a register row
-    counts through its `filed_utc`)."""
-    grades, rounds = [], {}
+    counts through its `filed_utc`). Each filing counts once."""
+    seen: dict[tuple, tuple] = {}
+
+    def add(kind, r, t):
+        if t:
+            seen.setdefault(_filing_id(kind, r, t), (kind, str(r.get("loop")), t))
     for r in _session_rows(read_jsonl(grades_queue_path()), session):
-        t = _ts(r.get("queued_utc"))
-        if t:
-            grades.append(t)
+        add("g", r, _ts(r.get("queued_utc")))
     for r in _session_rows(read_jsonl(rounds_queue_path()), session):
-        t = _ts(r.get("queued_utc"))
-        if t:
-            rounds.setdefault(str(r.get("loop")), []).append(t)
+        add("r", r, _ts(r.get("queued_utc")))
     for path in extra_registers or []:
         try:
             with open(path, encoding="utf-8") as f:
@@ -479,11 +492,15 @@ def filings(session: str, extra_registers: list[str] | None = None) -> dict:
         except (OSError, ValueError):
             continue
         for r in _session_rows(doc.get("grades", []), session):
-            if _ts(r.get("filed_utc")):
-                grades.append(_ts(r["filed_utc"]))
+            add("g", r, _ts(r.get("filed_utc")))
         for r in _session_rows(doc.get("rounds", []), session):
-            if _ts(r.get("filed_utc")):
-                rounds.setdefault(str(r.get("loop")), []).append(_ts(r["filed_utc"]))
+            add("r", r, _ts(r.get("filed_utc")))
+    grades, rounds = [], {}
+    for kind, loop, t in seen.values():
+        if kind == "g":
+            grades.append(t)
+        else:
+            rounds.setdefault(loop, []).append(t)
     return {"grades": sorted(grades), "rounds": {k: sorted(v) for k, v in rounds.items()}}
 
 
@@ -543,22 +560,58 @@ def session_lines(today: str | None = None) -> list[str]:
     return out
 
 
-def queue_lines(hours: int = 24) -> list[str]:
+def _age_s(ts, now: "_dt.datetime | None" = None) -> float:
+    try:
+        then = _dt.datetime.strptime(_ts(ts), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc)
+    except ValueError:
+        return 0.0
+    return ((now or _dt.datetime.now(_dt.timezone.utc)) - then).total_seconds()
+
+
+def queue_rows(path: str) -> list[dict]:
+    """A queue's real rows, with any marks a flush left in `*.marks` applied
+    (skyne scripts/w_queue.py writes them when it cannot rewrite the queue)."""
+    marks = {m["key"]: m for m in read_jsonl(path + ".marks") if m.get("key")}
+    rows = []
+    for r in read_jsonl(path):
+        if r.get("test"):
+            continue
+        m = marks.get(r.get("key"))
+        if m and not r.get("flushed_in"):
+            r = dict(r, flushed_in=m.get("flushed_in"), flushed_utc=m.get("flushed_utc"))
+        rows.append(r)
+    return rows
+
+
+def queue_lines(hours: int = 24, now: "_dt.datetime | None" = None) -> list[str]:
+    """Grades and rounds that are NOT safely in Skyne's record yet: waiting on
+    this PC, stuck in a save PR nobody merged, or damaged lines set aside.
+    Saving them is Claude's job (skyne scripts/wince_grades.py flush and
+    redteam_rounds.py flush, then merge the PR); a flush re-sends rows whose PR
+    was closed unmerged."""
     out = []
     for path, label in ((grades_queue_path(), "Wince grades"), (rounds_queue_path(), "red-team rounds")):
-        # a row whose PR is already open (flushed_in) is not waiting on a flush
-        rows = [r for r in read_jsonl(path) if not r.get("test") and not r.get("flushed_in")]
-        if not rows:
-            continue
-        oldest = min(_ts(r.get("queued_utc")) or "9999" for r in rows)
+        rows = queue_rows(path)
+        waiting = [r for r in rows if not r.get("flushed_in")]
+        if waiting and max(_age_s(r.get("queued_utc"), now) for r in waiting) > hours * 3600:
+            oldest = min(_ts(r.get("queued_utc")) or "9999" for r in waiting)
+            out.append(f"{len(waiting)} {label} are waiting on this PC to be saved to Skyne's record "
+                       f"(oldest {oldest[:10]}). Nothing for you to do: Claude saves them.")
+        stuck = [r for r in rows if r.get("flushed_in")
+                 and _age_s(r.get("flushed_utc") or r.get("queued_utc"), now) > hours * 3600]
+        if stuck:
+            prs = sorted({"#" + str(r["flushed_in"]).rstrip("/").rsplit("/", 1)[-1] for r in stuck})
+            out.append(f"{len(stuck)} {label} were sent to be saved more than a day ago, but the "
+                       f"pull request was never merged ({', '.join(prs)}). Claude merges it, or "
+                       f"re-sends them if it was closed.")
         try:
-            age = (_dt.datetime.now(_dt.timezone.utc) - _dt.datetime.strptime(
-                oldest, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc)).total_seconds()
-        except ValueError:
-            continue
-        if age > hours * 3600:
-            out.append(f"{len(rows)} {label} queued since {oldest[:10]}: /handoff flushes them "
-                       f"into a PR.")
+            with open(path + ".broken", encoding="utf-8", errors="replace") as f:
+                n = sum(1 for line in f if line.strip())
+        except OSError:
+            n = 0
+        if n:
+            out.append(f"{n} damaged {label} line(s) were set aside in {path}.broken and are not "
+                       f"counted anywhere. Claude reads them and files them again.")
     return out
 
 
@@ -796,6 +849,49 @@ def self_test() -> int:
               "a tagged lens-4 run is NOT satisfied by a plain grade row")
         check(unfiled_runs(runs, fl, escape_ts="2026-11-17T15:06:30") == [],
               "'no grade to file:' said after both finishes accounts for them")
+        # PLANTED (W red team round 2): one grade seen in the queue, on main and in a
+        # worktree copy is ONE filing, so two finishes still owe one.
+        row = {"session": "S2", "key": "k1", "subject": "x", "pass": 1,
+               "queued_utc": "2026-11-17T16:00:00Z", "filed_utc": "2026-11-17T16:00:00Z"}
+        app(os.environ["SKYNE_GRADES_QUEUE"], row)
+        regs = []
+        for n in range(3):
+            rp = os.path.join(d, "reg%d.json" % n)
+            with open(rp, "w", encoding="utf-8") as fh:
+                json.dump({"grades": [row, {"session": "S2", "subject": "y", "pass": 1,
+                                            "filed_utc": "2026-11-17T16:01:00Z"}]}, fh)
+            regs.append(rp)
+        fl2 = filings("S2", regs)
+        two = [{"finish": "2026-11-17T15:59:00", "loop": None}] * 3
+        check(len(fl2["grades"]) == 2 and len(unfiled_runs(two, fl2)) == 1,
+              "PLANTED: the same grade in the queue and three register copies counts once "
+              "(a keyed row by key, an unkeyed one by subject+pass+time): 3 finishes, 2 filings, 1 owed")
+        # the readout: waiting, stuck in an unmerged PR, damaged lines, pending marks
+        gq = os.environ["SKYNE_GRADES_QUEUE"]
+        with open(gq, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"key": "w1", "queued_utc": "2026-11-10T00:00:00Z"}) + "\n")
+            fh.write(json.dumps({"key": "w2", "queued_utc": "2026-11-10T00:00:00Z"}) + "\n")
+            fh.write(json.dumps({"key": "s1", "queued_utc": "2026-11-10T00:00:00Z",
+                                 "flushed_in": "https://github.com/x/y/pull/972"}) + "\n")
+            fh.write(json.dumps({"key": "s2", "queued_utc": "2026-11-19T00:00:00Z",
+                                 "flushed_in": "https://github.com/x/y/pull/1069",
+                                 "flushed_utc": "2026-11-19T23:00:00Z"}) + "\n")
+        with open(gq + ".marks", "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"key": "w2", "flushed_in": "https://github.com/x/y/pull/1070",
+                                 "flushed_utc": "2026-11-19T23:30:00Z"}) + "\n")
+        with open(gq + ".broken", "w", encoding="utf-8") as fh:
+            fh.write('{"half a line\n98f6"\n')
+        ql = queue_lines(now=_dt.datetime(2026, 11, 20, 12, tzinfo=_dt.timezone.utc))
+        check(any(x.startswith("1 Wince grades are waiting") for x in ql),
+              "PLANTED: a row waiting on this PC is named; one whose mark sits in .marks is not "
+              "waiting: " + repr(ql))
+        check(any(x.startswith("1 Wince grades were sent") and "#972" in x and "#1069" not in x
+                  for x in ql),
+              "PLANTED: a row sent in a PR more than a day ago is named with its PR; a fresh one is not")
+        check(any(x.startswith("2 damaged Wince grades") for x in ql),
+              "PLANTED: damaged lines set aside in .broken are counted in the readout")
+        check(not any("/handoff" in x or "flush" in x.lower() for x in ql),
+              "the queue lines carry no /handoff or flush jargon")
         for k in ("SKYNE_GRADES_QUEUE", "SKYNE_ROUNDS_QUEUE"):
             os.environ.pop(k, None)
 
