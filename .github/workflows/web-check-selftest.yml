@@ -1,0 +1,46 @@
+name: web-check-selftest
+
+# Proves the Web Standard checker can still FAIL (house-rules 6c): every
+# planted fault in scripts/web_check/fixtures/bad.html must be caught, the
+# clean page beside it must pass, and a 404 must never read as a pass. Then
+# runs the reusable workflow itself, end to end, on the clean page, exactly
+# as a site repo calls it. Public repo, so these minutes are free.
+on:
+  pull_request:
+    paths:
+      - "scripts/web_check/**"
+      - ".github/workflows/web-check.yml"
+      - ".github/workflows/web-check-selftest.yml"
+
+concurrency:
+  group: web-check-selftest-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install
+        working-directory: scripts/web_check
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps --only-shell chromium
+      - name: Planted faults are caught; the clean page is clean
+        working-directory: scripts/web_check
+        run: node web_check.mjs --self-test
+
+  as-a-site-calls-it:
+    uses: ./.github/workflows/web-check.yml
+    with:
+      serve: scripts/web_check/fixtures
+      pages: /good.html
+      baseline: scripts/web_check/fixtures/no-baseline.json
+      bridge_ref: ${{ github.head_ref }}

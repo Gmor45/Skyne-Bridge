@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """PreToolUse hook: refuse a design edit until its governing source was opened.
 
+EXTENDED 2026-11-20 -- READ THIS FIRST. Garrett approved one Web Standard for
+every website ("go", Skyne DECISIONS 2026-11-20). It lives in this plugin at
+`skills/web-standard/SKILL.md`, so it reaches every repo, where DESIGN.md only
+ever loaded inside Skyne (that is how Bluelink shipped a one-column page on
+2026-11-18). This gate now also covers WEBSITE files in any repo -- pages,
+stylesheets and page code (see `is_web_file`) -- and refuses them until the
+session has opened the Web Standard (the Skill, a Read of the file, or a Bash
+command naming it). Stylesheets still need DESIGN.md too, and the refusal now
+says where DESIGN.md lives and how to read it from another repo (2026-09-01
+miss: DESIGN.md said "read me first" but nothing pointed at it).
+
 WHY THIS EXISTS
 ---------------
 House-rules rule 38 — "Designing anything? One door, and it is this table" —
@@ -107,6 +118,31 @@ DASHBOARD_PHIL = "Dashboard Design Philosophy.md"
 BRAID_SPEC = "Braid Panel — Build Spec.md"
 BRANDING = "BRANDING.md"
 PALETTE = "Palette.md"
+WEB_STANDARD = "The Web Standard"  # skills/web-standard/SKILL.md in this plugin
+
+# Where each doc lives, for the refusal text: a gate that says "open X"
+# without saying where X is just sends the session searching.
+WHERE = {
+    DESIGN_MD: "Gmor45/Skyne .claude/skills/house-rules/DESIGN.md -- from any repo: "
+               "gh api repos/Gmor45/Skyne/contents/.claude/skills/house-rules/DESIGN.md "
+               "-H 'Accept: application/vnd.github.raw'",
+    BRANDING: "Gmor45/Skyne assets/brand/skyne/BRANDING.md",
+    PALETTE: "Gmor45/Gartera-Vault Codex/Config/Palette.md",
+    CONSOLE_RECORD: "Gmor45/Gartera-Vault Vault Ops/",
+    DASHBOARD_PHIL: "Gmor45/Gartera-Vault Vault Ops/",
+    BRAID_SPEC: "Gmor45/Gartera-Vault Vault Ops/",
+}
+
+# Website files (2026-11-20). Pages and stylesheets by extension; page CODE
+# only where it is plainly page code (a web folder, or a name like pages.js
+# or coach_page.py), because "every .js file" would fire on this plugin's own
+# tooling inside a day -- the false-positive death the docstring names.
+WEB_EXT = {".html", ".htm", ".css", ".scss", ".jsx", ".tsx", ".vue", ".svelte", ".astro"}
+CODE_EXT = {".js", ".mjs", ".ts", ".py"}
+WEB_DIRS = {"site", "public", "web", "www", "page", "pages", "static", "frontend",
+            "components", "templates", "views"}
+PAGE_NAME_RE = re.compile(r"(^|[_\-.])(page|pages|view|views|template|templates)([_\-.]|$)", re.IGNORECASE)
+NOT_WEB_DIRS = {"node_modules", ".git", "fixtures", "tests", "test", "__pycache__"}
 
 INSTRUMENT_FILES = {"render.py", "editor_ui.py"}
 TOKEN_FILES = {"tokens.css", "build_tokens.py", "build_icons.py", "make_icon.py"}
@@ -144,14 +180,41 @@ def is_design_file(path: str) -> bool:
     return base.lower().endswith(".css")
 
 
-def required_docs(path: str, content: str) -> list[str]:
-    """Which docs rule 38's table says this edit needs, in table order."""
+def is_web_file(path: str) -> bool:
+    """A page, a stylesheet, or code that plainly builds a page."""
 
+    norm = path.replace("\\", "/")
+    parts = [s.lower() for s in norm.split("/") if s]
+    if not parts:
+        return False
+    if any(s in NOT_WEB_DIRS for s in parts[:-1]):
+        return False
+    base = parts[-1]
+    ext = "." + base.rsplit(".", 1)[-1] if "." in base else ""
+    if ext in WEB_EXT:
+        return True
+    if ext in CODE_EXT:
+        if ext != ".py" and any(s in WEB_DIRS for s in parts[:-1]):
+            return True
+        stem = base[: -len(ext)]
+        if PAGE_NAME_RE.search(stem):
+            return True
+    return False
+
+
+def required_docs(path: str, content: str) -> list[str]:
+    """Which docs rule 38's table (and the Web Standard) say this edit needs."""
+
+    web = is_web_file(path)
     if not is_design_file(path):
-        return []
+        return [WEB_STANDARD] if web else []
     base = _basename(path)
     content = content or ""
     docs = [DESIGN_MD]
+    # Brand token files are governed by BRANDING.md (below), not by a page's rules.
+    is_brand = base in TOKEN_FILES or "/brand/" in ("/" + path.replace("\\", "/").lower())
+    if web and not is_brand:
+        docs.append(WEB_STANDARD)
     if base in INSTRUMENT_FILES:
         docs += [CONSOLE_RECORD, DASHBOARD_PHIL]
     if MOTION_RE.search(content):
@@ -189,6 +252,19 @@ def read_transcript(path: str) -> list[dict]:
 ALL_DOCS = (DESIGN_MD, CONSOLE_RECORD, DASHBOARD_PHIL, BRAID_SPEC, BRANDING, PALETTE)
 
 
+def _is_web_standard_path(text: str) -> bool:
+    low = text.replace("\\", "/").lower()
+    return "web-standard/skill.md" in low or "web-standard.md" in low
+
+
+def web_standard_path() -> str:
+    """This plugin's own copy, so the refusal names a path that exists here."""
+
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(here, "..", "skills", "web-standard", "SKILL.md"))
+
+
 def docs_read(entries: list[dict] | None) -> set[str]:
     """Every design doc this session has evidence of having opened."""
 
@@ -204,16 +280,24 @@ def docs_read(entries: list[dict] | None) -> set[str]:
                 continue
             name = blk.get("name")
             inp = blk.get("input") or {}
+            if name == "Skill":
+                if "web-standard" in str(inp.get("skill") or "").lower():
+                    found.add(_norm(WEB_STANDARD))
+                continue
             if name == "Read":
                 fp = inp.get("file_path") or ""
                 if fp:
                     found.add(_norm(fp))
+                    if _is_web_standard_path(fp):
+                        found.add(_norm(WEB_STANDARD))
             elif name == "Bash":
                 # `gh api .../Console%20%E2%80%94%20Design%20Record.md` never
                 # contains the literal doc name -- it contains its URL escape.
                 # Un-quoting once is enough for both `%20` and a UTF-8-encoded
                 # em-dash; a command with no escapes decodes to itself.
                 cmd = unquote(inp.get("command") or "")
+                if _is_web_standard_path(cmd):
+                    found.add(_norm(WEB_STANDARD))
                 for doc in ALL_DOCS:
                     if doc in cmd or doc.replace("—", "-") in cmd:
                         found.add(_norm(doc))
@@ -239,7 +323,15 @@ def verdict(path: str, content: str, entries: list[dict]) -> str | None:
         f"rule 38 names what governs it. This session has not opened:",
     ]
     for d in missing:
-        lines.append(f"  - {d}")
+        if d == WEB_STANDARD:
+            lines.append(
+                f"  - The Web Standard (every website's rules, RULED 2026-11-20): "
+                f"run the Skill 'web-standard', or Read {web_standard_path()}"
+            )
+        elif d in WHERE:
+            lines.append(f"  - {d}  ({WHERE[d]})")
+        else:
+            lines.append(f"  - {d}")
     lines.append(
         "Rule 38 is rule 33's 26th instance and this is its third break in one "
         "day, all about Loom's look. Open the file(s) above, then retry the edit."
@@ -374,6 +466,45 @@ def self_test() -> int:
     if _norm("Skyne Console — Design Record.md") != _norm("skyne-console-design-record.md"):
         fails.append("em-dash and hyphen must normalise identically")
 
+    # -- the Web Standard (2026-11-20) -----------------------------------------
+    def mk_skill(name: str) -> dict:
+        return {
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Skill", "input": {"skill": name}}
+            ]},
+        }
+
+    refuse("app/src/pages.js", "return '<main>'", [],
+           "Bluelink's page code with no Web Standard read")
+    refuse("site/index.html", "<h1>Hi</h1>", [], "a page in any repo")
+    refuse("coach_page.py", "html = '<p>'", [], "Third Eye's page builder")
+    refuse("web/app.mjs", "x = 1", [], "page code in a web folder")
+    allow("app/src/pages.js", "return '<main>'", [mk_skill("load-house-rules:web-standard")],
+          "the Web Standard opened through the Skill")
+    allow("site/index.html", "<h1>Hi</h1>",
+          [mk_read("C:/Users/gmoor/Skyne-Bridge-live/.claude/skills/web-standard/SKILL.md")],
+          "the Web Standard opened with Read")
+    allow("site/index.html", "<h1>Hi</h1>",
+          [mk_bash("cat ~/.claude/plugins/x/skills/web-standard/SKILL.md")],
+          "the Web Standard opened through Bash")
+    refuse("site/style.css", "a { color: red }",
+           [mk_read("x/skills/web-standard/SKILL.md")],
+           "a stylesheet still needs DESIGN.md as well as the Web Standard")
+    allow("site/style.css", "a { color: red }",
+          [mk_read("x/skills/web-standard/SKILL.md"), mk_read("x/DESIGN.md")],
+          "both read")
+    allow("scripts/web_check/web_check.mjs", "x", [], "tooling is not a page")
+    allow(".claude/hooks/design_source_gate.py", "x", [], "this hook is not a page")
+    allow("tests/fixtures/page.html", "x", [], "a test fixture is not a page")
+    allow("node_modules/foo/index.html", "x", [], "a dependency is not a page")
+    allow("README.md", "<p>", [], "markdown is not a page")
+    r = verdict("site/style.css", "a{}", []) or ""
+    if "gh api repos/Gmor45/Skyne/contents/.claude/skills/house-rules/DESIGN.md" not in r:
+        fails.append("the refusal must say where DESIGN.md is and how to read it")
+    if "web-standard" not in r:
+        fails.append("the refusal must name the Web Standard skill")
+
     # -- fail-open plumbing ----------------------------------------------------
     try:
         verdict("loom/render.py", None, [])  # type: ignore[arg-type]
@@ -400,7 +531,7 @@ def self_test() -> int:
         for f in fails:
             print("SELF-TEST FAIL:", f)
         return 1
-    print("self-test: 14 cases passed")
+    print("self-test: 30 cases passed")
     return 0
 
 

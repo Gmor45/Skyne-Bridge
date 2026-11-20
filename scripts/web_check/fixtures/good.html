@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A clean page</title>
+<style>
+  :root { --ground: #ffffff; --ink: #1b1f24; --panel: #eef1f4; }
+  @media (prefers-color-scheme: dark) { :root { --ground: #14171b; --ink: #eef1f4; --panel: #1f242a; } }
+  body { margin: 0; background: var(--ground); color: var(--ink); font: 16px system-ui, sans-serif; }
+  main { padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border-radius: 14px; padding: 16px; }
+  button, input { min-width: 44px; min-height: 44px; font-size: 16px; border-radius: 8px; border: 1px solid var(--ink); background: var(--ground); color: var(--ink); }
+</style></head>
+<body><main>
+  <h1>A clean page</h1>
+  <section class="card"><h2>One thing</h2><p>Plain words, readable in light and dark.</p>
+    <label for="q">Name</label> <input id="q" type="text"></section>
+  <section class="card"><h2>Another thing</h2><button type="button" data-theme-toggle>Light or dark</button></section>
+</main></body></html>

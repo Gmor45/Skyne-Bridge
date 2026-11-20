@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planted faults</title>
+<style>
+  body { margin: 0; background: #ffffff; color: #222222; font: 16px system-ui, sans-serif; }
+  main { width: 600px; margin: 0 auto; }
+  .tiny { display: inline-block; width: 20px; height: 20px; padding: 0; border: 1px solid #222; background: #eee; }
+  .small-input { font-size: 12px; }
+  .wide { width: 900px; height: 10px; background: #ccc; }
+  .stage { touch-action: none; width: 300px; height: 300px; background: #ddd; }
+  .odd { border-radius: 5px; background: #ddd; width: 120px; height: 60px; }
+  .faint { color: #cccccc; }
+  .tall { height: 4000px; }
+</style></head>
+<body><main>
+  <h1>Planted faults</h1>
+  <p>Each element below breaks one Web Standard rule on purpose.</p>
+  <button class="tiny">x</button>
+  <input class="small-input" type="text" aria-label="small text">
+  <div class="wide"></div>
+  <div class="stage"></div>
+  <div class="odd"></div>
+  <p class="faint">This gray text is too light to read.</p>
+  <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="50" height="50">
+  <div class="tall"></div>
+</main></body></html>

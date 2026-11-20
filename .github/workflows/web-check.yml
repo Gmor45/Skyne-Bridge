@@ -1,0 +1,116 @@
+name: web-check
+
+# The automatic half of the Web Standard (.claude/skills/web-standard/SKILL.md,
+# RULED 2026-11-20). A site repo calls this on its pull requests:
+#
+#   jobs:
+#     web-standard:
+#       uses: Gmor45/Skyne-Bridge/.github/workflows/web-check.yml@main
+#       with:
+#         serve: site                 # a static folder, OR
+#         start: "cd app && npm ci && npm run dev -- --port 8791"
+#         base: http://127.0.0.1:8791 # with start
+#         pages: "/ /app"
+#
+# It opens every page at 390px and 2560px, in light and dark, runs axe and the
+# Web Standard's measurable rules, and FAILS only when a count goes up against
+# the site's .web-check/baseline.json. Known problems stay listed there until
+# they are fixed, so a site can turn this on before it is clean.
+on:
+  workflow_call:
+    inputs:
+      pages:
+        description: "Page paths to check, space or comma separated"
+        type: string
+        required: true
+      serve:
+        description: "A static folder to serve (instead of start/base)"
+        type: string
+        default: ""
+      start:
+        description: "Shell command that builds and starts the site (left running)"
+        type: string
+        default: ""
+      base:
+        description: "Where the started site answers, e.g. http://127.0.0.1:8791"
+        type: string
+        default: ""
+      headers:
+        description: "Extra request headers, one 'Name: value' per line (local test sign-in)"
+        type: string
+        default: ""
+      baseline:
+        type: string
+        default: ".web-check/baseline.json"
+      bridge_ref:
+        description: "Which Skyne-Bridge version of the checker to run"
+        type: string
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  web-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Get the checker (Skyne-Bridge, public)
+        uses: actions/checkout@v7
+        with:
+          repository: Gmor45/Skyne-Bridge
+          ref: ${{ inputs.bridge_ref }}
+          path: .web-standard
+          sparse-checkout: scripts/web_check
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install the checker and its browser
+        working-directory: .web-standard/scripts/web_check
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps --only-shell chromium
+
+      - name: Start the site
+        if: inputs.start != ''
+        env:
+          START: ${{ inputs.start }}
+          BASE: ${{ inputs.base }}
+        run: |
+          nohup bash -c "$START" > "$RUNNER_TEMP/site.log" 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -s -o /dev/null "$BASE"; then echo "site is up after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::The site did not answer at $BASE within 90 seconds."
+          tail -50 "$RUNNER_TEMP/site.log"
+          exit 1
+
+      - name: Check every page against the Web Standard
+        env:
+          PAGES: ${{ inputs.pages }}
+          SERVE: ${{ inputs.serve }}
+          BASE: ${{ inputs.base }}
+          HEADERS: ${{ inputs.headers }}
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          args=(--pages "$PAGES" --baseline "$BASELINE" --json "$RUNNER_TEMP/web-check.json")
+          if [ -n "$SERVE" ]; then args+=(--serve "$SERVE"); else args+=(--base "$BASE"); fi
+          while IFS= read -r h; do
+            [ -n "$h" ] && args+=(--header "$h")
+          done <<< "$HEADERS"
+          node .web-standard/scripts/web_check/web_check.mjs "${args[@]}"
+
+      - name: Keep the full findings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-check-findings
+          path: ${{ runner.temp }}/web-check.json
+          if-no-files-found: ignore
+          retention-days: 7
