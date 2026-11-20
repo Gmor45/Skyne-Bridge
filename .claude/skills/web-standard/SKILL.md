@@ -174,4 +174,15 @@ Each finding names its rule. `axe:<id>` comes from axe (R rules);
 `tap-44` is P1, `radius` is L3, `input-16` is P2, `h-scroll` is R6,
 `touch-none` is P5, `one-column` is L4, `no-light-dark` and
 `no-theme-toggle` are L7. A count that drops is good news: lower the
-baseline in the same pull request (`--update-baseline`).
+baseline in the same pull request.
+
+**Set a baseline from CI, never from your own computer.** CI runs on
+Linux, which draws text a pixel or two differently from Windows, so a
+baseline made locally fails in CI (Tangle, 2026-11-20). Download the pull
+request run's `web-check-findings` file (`gh run download <run> -n
+web-check-findings`) and run `node web_check.mjs --baseline-from
+web-check.json --baseline .web-check/baseline.json`.
+
+A hidden spam-trap field (S2) is not counted: anything inside
+`aria-hidden="true"`, `hidden` or `inert`, an input with `tabindex="-1"`,
+or something parked off the left or top edge of the page.

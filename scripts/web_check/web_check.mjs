@@ -33,7 +33,7 @@
 //   node web_check.mjs --base http://127.0.0.1:8791 --pages /,/app
 //   node web_check.mjs --serve site --pages /index.html
 //   options: --header "Name: value" (repeat)  --baseline FILE
-//            --update-baseline  --json FILE  --self-test
+//            --update-baseline  --baseline-from FINDINGS.json  --json FILE  --self-test
 // Exit: 0 no regressions, 1 a count went up, 2 the tool itself failed.
 
 import http from 'node:http';
@@ -63,6 +63,7 @@ function parseArgs(argv) {
     else if (k === '--update-baseline') a.update = true;
     else if (k === '--json') a.json = v();
     else if (k === '--self-test') a.selfTest = true;
+    else if (k === '--baseline-from') a.baselineFrom = v();
     else throw new Error(`unknown option ${k}`);
   }
   return a;
@@ -104,11 +105,21 @@ function measure(view) {
     const cs = getComputedStyle(el);
     return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0;
   };
+  // A spam trap (S2's hidden field) or anything parked off-screen is not
+  // something a person sees or taps; counting it would punish S2 itself.
+  const forPeople = (el) => {
+    if (!visible(el)) return false;
+    if (el.closest('[aria-hidden="true"],[hidden],[inert]')) return false;
+    if (el.tagName === 'INPUT' && el.getAttribute('tabindex') === '-1') return false;
+    const r = el.getBoundingClientRect();
+    if (r.right + window.scrollX <= 0 || r.bottom + window.scrollY <= 0) return false;
+    return true;
+  };
 
   // P1: 44px targets. A link inside a sentence is exempt (it cannot be 44px tall).
   const CLICK = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=checkbox],[role=switch],[tabindex]:not([tabindex="-1"])';
   for (const el of document.querySelectorAll(CLICK)) {
-    if (!visible(el)) continue;
+    if (!forPeople(el)) continue;
     const cs = getComputedStyle(el);
     if (el.tagName === 'A' && cs.display === 'inline' && el.parentElement) {
       const own = (el.textContent || '').trim().length;
@@ -124,7 +135,7 @@ function measure(view) {
   if (view === 'phone') {
     // P2: inputs 16px or larger.
     for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]),select,textarea')) {
-      if (!visible(el)) continue;
+      if (!forPeople(el)) continue;
       const fs = parseFloat(getComputedStyle(el).fontSize);
       if (fs < 16) add('input-16', `${name(el)} ${fs}px`);
     }
@@ -162,7 +173,7 @@ function measure(view) {
   if (view === 'wide' && !document.querySelector('[data-layout="prose"]')) {
     let left = Infinity, right = -Infinity;
     for (const el of document.body ? document.body.querySelectorAll('h1,h2,h3,h4,p,li,td,th,img,svg,canvas,button,input,select,textarea,figure,pre,table') : []) {
-      if (!visible(el)) continue;
+      if (!forPeople(el)) continue;
       const r = el.getBoundingClientRect();
       if (r.width >= W * 0.95) continue;
       left = Math.min(left, r.left); right = Math.max(right, r.right);
@@ -263,7 +274,7 @@ function report({ up, down, same }, found) {
     for (const u of up) lines.push(`  ${u.k}: ${u.was} -> ${u.now}   e.g. ${u.samples.slice(0, 2).join(' ; ')}`);
   }
   if (down.length) {
-    lines.push('', 'BETTER (lower the baseline: run with --update-baseline and commit it):');
+    lines.push('', 'BETTER (lower the baseline from this run\'s web-check-findings file: --baseline-from):');
     for (const d of down) lines.push(`  ${d.k}: ${d.was} -> ${d.now}`);
   }
   if (same.length) {
@@ -301,18 +312,37 @@ async function selfTest() {
   return 0;
 }
 
+function writeBaseline(file, counts) {
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  const sorted = Object.fromEntries(Object.keys(counts).sort().map((k) => [k, counts[k]]));
+  const readme = 'Known Web Standard problems for this site (page | check | view: count). '
+    + 'The check fails if a count goes up. After fixing a problem, lower its count from the '
+    + 'pull request\'s CI run: download its web-check-findings file and run web_check.mjs '
+    + '--baseline-from web-check.json --baseline .web-check/baseline.json. '
+    + 'Rules: Skyne-Bridge .claude/skills/web-standard/SKILL.md';
+  fs.writeFileSync(file, JSON.stringify({ _readme: readme, counts: sorted }, null, 1) + '\n');
+  console.log(`baseline written: ${Object.keys(sorted).length} entries -> ${file}`);
+}
+
 async function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a.selfTest) process.exit(await selfTest());
+  if (a.baselineFrom) {
+    // Set a baseline from a CI run's findings (the web-check-findings
+    // artifact). CI runs on Linux, which draws text a pixel or two
+    // differently from a Windows browser, so CI's numbers are the ones the
+    // check compares against. Never set a baseline from a local run.
+    if (!a.baseline) throw new Error('--baseline-from needs --baseline FILE');
+    const f = JSON.parse(fs.readFileSync(a.baselineFrom, 'utf8'));
+    writeBaseline(a.baseline, Object.fromEntries(Object.entries(f).map(([k, d]) => [k, d.count])));
+    process.exit(0);
+  }
   const found = await run(a);
   const counts = Object.fromEntries(Object.entries(found).map(([k, d]) => [k, d.count]));
   if (a.json) fs.writeFileSync(a.json, JSON.stringify(found, null, 1));
   if (a.update) {
     if (!a.baseline) throw new Error('--update-baseline needs --baseline FILE');
-    fs.mkdirSync(path.dirname(path.resolve(a.baseline)), { recursive: true });
-    const sorted = Object.fromEntries(Object.keys(counts).sort().map((k) => [k, counts[k]]));
-    fs.writeFileSync(a.baseline, JSON.stringify({ _readme: 'Known Web Standard problems for this site (page | check | view: count). The check fails if a count goes up. Lower a count by fixing the problem and re-running web_check.mjs with --update-baseline. Rules: Skyne-Bridge .claude/skills/web-standard/SKILL.md', counts: sorted }, null, 1) + '\n');
-    console.log(`baseline written: ${Object.keys(sorted).length} entries -> ${a.baseline}`);
+    writeBaseline(a.baseline, counts);
   }
   let baseline = {};
   if (a.baseline && fs.existsSync(a.baseline)) baseline = JSON.parse(fs.readFileSync(a.baseline, 'utf8')).counts || {};
