@@ -43,6 +43,7 @@ from __future__ import annotations
 import datetime as _dt
 import glob
 import json
+import time
 import os
 import sys
 import tempfile
@@ -50,6 +51,9 @@ import tempfile
 HOME = os.path.expanduser("~")
 TOKEN_TYPES = ("input", "cache_write", "cache_read", "output")
 AUTO_WINDOW_S = 20 * 60
+CHECKED_SINCE = "2026-11-20"   # first full Eastern day under the Checked-only trigger (ruled 2026-11-19);
+                               # days before it ran the old, wider trigger
+COMPUTE_STALE_S = 30 * 60      # a background compute older than this is a crash
 HUD_DEFAULT = r"C:\Users\gmoor\claude-usage-hud\usage-history.jsonl"
 
 
@@ -290,21 +294,78 @@ def compute_day(day: str, root=None, follow=None, hud=None) -> dict:
     return row
 
 
+def _take(lock: str, stale_s: float) -> bool:
+    """Create `lock` exclusively; a lock older than stale_s is a crash and is replaced."""
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except (FileExistsError, PermissionError):
+            try:
+                if time.time() - os.stat(lock).st_mtime > stale_s:
+                    os.unlink(lock)
+                    continue
+            except OSError:
+                continue
+            return False
+    return False
+
+
 def write_row(row: dict, path: str | None = None) -> None:
+    """Replace one day's row. One writer at a time (a `.wlock` beside the file),
+    each with its own temp file: two computes used to share one .tmp."""
     path = path or cost_path()
-    rows = [r for r in read_jsonl(path) if r.get("day") != row["day"]]
-    rows.append(row)
-    rows.sort(key=lambda r: r.get("day", ""))
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        for r in rows:
-            f.write(json.dumps(r, sort_keys=True) + "\n")
-    os.replace(tmp, path)
+    lock = path + ".wlock"
+    deadline = time.time() + 15
+    while not _take(lock, 60):
+        if time.time() > deadline:
+            raise RuntimeError(f"{lock} held for 15 s; nothing written")
+        time.sleep(0.05)
+    try:
+        rows = [r for r in read_jsonl(path) if r.get("day") != row["day"]]
+        rows.append(row)
+        rows.sort(key=lambda r: r.get("day", ""))
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            for r in rows:
+                f.write(json.dumps(r, sort_keys=True) + "\n")
+        for _ in range(100):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:          # Windows: a reader holds the file a moment
+                time.sleep(0.05)
+        else:
+            os.unlink(tmp)
+            raise RuntimeError(f"could not replace {path}")
+    finally:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
 
 
 def fmt_tokens(n: int) -> str:
     return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.0f}k" if n >= 1e3 else str(n)
+
+
+def pct(share: float) -> str:
+    """Whole percent, half rounds up: the same rule as the Companion card's
+    Math.round (Python's round() rounds half to even, and the two disagreed)."""
+    return f"{int(share * 100 + 0.5)}%"
+
+
+def per_day(rows: list[dict]) -> str:
+    return f"{sum(r['auto_runs'] for r in rows) / len(rows):.0f}" if rows else "-"
+
+
+def regimes(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(days under the old wide trigger, days under Checked-only)."""
+    return ([r for r in rows if r.get("day", "") < CHECKED_SINCE],
+            [r for r in rows if r.get("day", "") >= CHECKED_SINCE])
 
 
 def line(path: str | None = None, hud=None, today: str | None = None) -> str:
@@ -315,20 +376,23 @@ def line(path: str | None = None, hud=None, today: str | None = None) -> str:
     parts = []
     if row:
         a = row["auto_tokens"]
-        mt = ", ".join(f"{m.split('-')[1] if '-' in m else m}" for m in row["auto_by_model"]) or "-"
         wk = ""
         if row.get("weekly_last") is not None:
             d = row["weekly_last"] - (row.get("weekly_first") or row["weekly_last"])
-            wk = (f"; Max weekly {row['weekly_last']}% for the whole plan, all chats "
-                  f"({'+' if d >= 0 else ''}{d} that day)")
+            wk = (f" Max weekly {row['weekly_last']}% for the whole plan, all chats "
+                  f"({'+' if d >= 0 else ''}{d} that day).")
+        n, m = row["auto_runs"], row["manual_runs"]
+        by_hand = f" (and {m} more {'was' if m == 1 else 'were'} run by hand)" if m else ""
         parts.append(
-            f"W follow-up cost, {yday}: {row['auto_runs']} automatic Wince/Wren runs "
-            f"({row['manual_runs']} by hand), {fmt_tokens(sum(a.values()))} tokens "
-            f"[out {fmt_tokens(a['output'])}, new {fmt_tokens(a['input'] + a['cache_write'])}, "
-            f"re-read {fmt_tokens(a['cache_read'])}; models {mt}] = "
-            f"{row['share_output'] * 100:.1f}% of the output this PC wrote that day "
-            f"({row['share_all'] * 100:.1f}% of all its tokens, re-reads included){wk}. "
-            f"Cloud runs not counted.")
+            f"W follow-up cost, {yday}: the gates asked for {n} Wince/Wren run{'s' if n != 1 else ''}"
+            f"{by_hand}. The ones the gates asked for wrote "
+            f"{pct(row['share_output'])} of this PC's output that day ({fmt_tokens(a['output'])} of "
+            f"{fmt_tokens(row['all_tokens']['output'])}).{wk} Cloud runs not counted.")
+        old, new = regimes([r for r in read_jsonl(path or cost_path())
+                            if r.get("day", "") >= (go_live_day() or "")])
+        if old and new:
+            parts.append(f"Gate-asked runs a day: {per_day(old)} under the old wide trigger, "
+                         f"{per_day(new)} since the Checked-only change.")
     else:
         parts.append(f"W follow-up cost for {yday}: not computed yet (a background job "
                      f"is computing it; the next session shows it).")
@@ -375,6 +439,10 @@ def ensure_yesterday_in_background(today: str | None = None) -> bool:
     days = missing_days(today)
     if not days:
         return False
+    lock = cost_path() + ".computing"
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    if not _take(lock, COMPUTE_STALE_S):
+        return False                     # one is already running: never two full scans at once
     flags = 0
     if sys.platform == "win32":
         flags = 0x00000008 | 0x00000200 | 0x08000000      # DETACHED | NEW_GROUP | NO_WINDOW
@@ -385,6 +453,10 @@ def ensure_yesterday_in_background(today: str | None = None) -> bool:
                          close_fds=True)
         return True
     except OSError:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
         return False
 
 
@@ -481,9 +553,40 @@ def self_test() -> int:
         check(len(rows) == 1 and rows[0]["auto_runs"] == 7, "writing a day twice replaces it, never duplicates")
         os.environ["SKYNE_HUD_HISTORY"] = hud
         text = line(cp, hud, today="2026-11-17")
-        check("7 automatic Wince/Wren runs" in text and "Max weekly 33% for the whole plan, all chats (+3 that day)" in text
-              and "Cloud runs not counted" in text and "no reading in the last 24 hours" in text,
-              "the start line shows runs, tokens, share, weekly % and says the HUD is stale when it is")
+        check("asked for 7 Wince/Wren runs" in text and "Max weekly 33% for the whole plan, all chats (+3 that day)" in text
+              and "Cloud runs not counted" in text and "no reading in the last 24 hours" in text
+              and "[" not in text and "models" not in text,
+              "the start line shows runs, output share, weekly %, says the HUD is stale, and has no "
+              "token bracket")
+        check(pct(0.2395) == "24%" and pct(0.245) == "25%" and pct(0.0) == "0%",
+              "PLANTED: whole percent, half rounds up (Python's round() gives 24% for 0.245's float)")
+        # PLANTED: two writers at once -- every day survives (one shared .tmp lost rows before)
+        import threading
+        wp = os.path.join(tmp, "w-cost-race.jsonl")
+        days = [f"2026-10-{i:02d}" for i in range(1, 21)]
+        ths = [threading.Thread(target=write_row, args=(dict(row, day=dd), wp)) for dd in days]
+        [x.start() for x in ths]
+        [x.join() for x in ths]
+        check(sorted(r["day"] for r in read_jsonl(wp)) == days,
+              "PLANTED: 20 writers at once keep all 20 days (the write lock)")
+        # PLANTED: SessionStart in two chats at once starts ONE background compute
+        import subprocess as _sp
+        started = []
+        real_popen = _sp.Popen
+        _sp.Popen = lambda *a, **k: started.append(a)
+        saved_state = os.environ.get("SKYNE_STATE_DIR")
+        os.environ["SKYNE_STATE_DIR"] = tmp
+        try:
+            r1 = ensure_yesterday_in_background("2026-11-22")
+            r2 = ensure_yesterday_in_background("2026-11-22")
+        finally:
+            _sp.Popen = real_popen
+            if saved_state is None:
+                os.environ.pop("SKYNE_STATE_DIR", None)
+            else:
+                os.environ["SKYNE_STATE_DIR"] = saved_state
+        check(r1 is True and r2 is False and len(started) == 1,
+              "PLANTED: a second start-up while a compute runs does not start another full scan")
         check("not computed yet" in line(os.path.join(tmp, "none.jsonl"), hud, today="2026-11-17"),
               "a missing day says it has not been computed yet")
         empty = compute_day("2026-01-02", os.path.join(tmp, "projects"), follow, hud)
@@ -498,10 +601,21 @@ def self_test() -> int:
         rp = os.path.join(tmp, "w-cost-r.jsonl")
         write_row(dict(row, day="2026-11-17", auto_runs=0, share_all=0.0, share_output=0.0), rp)
         write_row(dict(row, day="2026-11-18", auto_runs=12, share_all=0.07, share_output=0.28), rp)
+        write_row(dict(row, day="2026-11-19", auto_runs=40, share_all=0.07, share_output=0.24), rp)
+        write_row(dict(row, day="2026-11-20", auto_runs=4, share_all=0.01, share_output=0.05), rp)
         rv = review(rp, since="2026-11-18", follow_rows=[], runs=[], grades=[])
-        check("1 day(s) from 2026-11-18" in rv and "12.0 a day" in rv and "28.0% of the output" in rv
+        check("3 day(s) from 2026-11-18" in rv and "2 day(s), 52 gate-asked runs (26.0 a day" in rv
+              and "1 day(s), 4 gate-asked runs (4.0 a day" in rv and "claude.ai" in rv
               and "Checked-only" in rv,
-              "PLANTED: the review leaves out the days before go-live and leads with the output share")
+              "PLANTED: the review leaves out the days before go-live and shows the old wide trigger "
+              "and Checked-only apart (mixed, the 4-a-day trigger read as 18.7)")
+        os.environ["SKYNE_W_FOLLOW_GOLIVE"] = os.path.join(tmp, "golive.json")
+        with open(os.environ["SKYNE_W_FOLLOW_GOLIVE"], "w", encoding="utf-8") as f:
+            json.dump({"go_live": "2026-11-18"}, f)
+        lt = line(rp, hud, today="2026-11-21")
+        os.environ.pop("SKYNE_W_FOLLOW_GOLIVE", None)
+        check("26 under the old wide trigger, 4 since the Checked-only change" in lt,
+              "PLANTED: the start line gives the yardstick: runs a day before and after the change: " + lt)
         os.environ.pop("SKYNE_HUD_HISTORY", None)
     print(f"w_cost self-test: {sum(res)}/{len(res)} passed")
     return 0 if all(res) else 1
@@ -517,20 +631,22 @@ def review(path: str | None = None, since: str | None = None, follow_rows=None, 
     rows = [r for r in read_jsonl(path or cost_path()) if r.get("day") and r["day"] >= since]
     if not rows:
         return "no w-cost.jsonl rows since go-live yet: nothing to review."
-    n = len(rows)
-    auto = sum(r["auto_runs"] for r in rows)
-    shares = [r["share_all"] for r in rows]
-    outs = [r["share_output"] for r in rows]
     wk = [r for r in rows if r.get("weekly_last") is not None]
-    toks = sum(sum(r["auto_tokens"].values()) for r in rows)
-    lines = [f"W follow-up review: {n} day(s) from {rows[0]['day']} to {rows[-1]['day']} "
-             f"(go-live {since or 'unknown'} onward).",
-             f"  Automatic Wince/Wren runs: {auto} total, {auto / n:.1f} a day (peak {max(r['auto_runs'] for r in rows)}); "
-             f"by hand: {sum(r['manual_runs'] for r in rows)}.",
-             f"  Tokens: {fmt_tokens(toks)} on those runs = {sum(outs) / n * 100:.1f}% of the output this PC "
-             f"wrote, on average (worst day {max(outs) * 100:.1f}%); {sum(shares) / n * 100:.1f}% of all its "
-             f"tokens with re-reads counted.",
-             ]
+    lines = [f"W follow-up review: {len(rows)} day(s) from {rows[0]['day']} to {rows[-1]['day']} "
+             f"(go-live {since or 'unknown'} onward). The trigger changed on {CHECKED_SINCE}, so the "
+             f"two are shown apart: decide on the second."]
+    for label, part in zip((f"Old wide trigger (before {CHECKED_SINCE})", "Checked-only (since then)"),
+                           regimes(rows)):
+        if not part:
+            lines.append(f"  {label}: no days.")
+            continue
+        n = len(part)
+        auto = sum(r["auto_runs"] for r in part)
+        outs = [r["share_output"] for r in part]
+        lines.append(f"  {label}: {n} day(s), {auto} gate-asked runs ({auto / n:.1f} a day, peak "
+                     f"{max(r['auto_runs'] for r in part)}; {sum(r['manual_runs'] for r in part)} more by "
+                     f"hand); they wrote {pct(sum(outs) / n)} of this PC's output on average "
+                     f"(worst day {pct(max(outs))}).")
     try:
         import w_follow
         rel = unf = 0
@@ -547,7 +663,8 @@ def review(path: str | None = None, since: str | None = None, follow_rows=None, 
                      f"{wk[-1]['day']} (the HUD view; it resets weekly, so read the trend, not the change).")
     else:
         lines.append("  Max weekly %: the HUD recorded no reading on these days.")
-    lines.append("  Cloud runs are NOT in these numbers (a lower bound by hand via list_events).")
+    lines.append("  NOT in these numbers: cloud runs, and Wince passes in claude.ai chats and Cowork "
+                 "(none of them leave a transcript on this PC).")
     lines.append("  Ask Garrett: keep Checked-only as is / Wince only at Checked (no Wren) / turn the gates off. "
                  "Then run `review --done`.")
     return "\n".join(lines)
@@ -576,11 +693,18 @@ def main(argv=None) -> int:
                 days = [x for x in argv[argv.index("--days") + 1].split(",") if x]
             else:
                 days = [argv[argv.index("--day") + 1] if "--day" in argv else prev_day(et_today())]
-            for day in days:
-                row = compute_day(day)
-                write_row(row)
-                print(f"w-cost {day}: {row['auto_runs']} automatic, {row['manual_runs']} manual, "
-                      f"share {row['share_all'] * 100:.2f}%")
+            try:
+                for day in days:
+                    row = compute_day(day)
+                    write_row(row)
+                    print(f"w-cost {day}: {row['auto_runs']} automatic, {row['manual_runs']} manual, "
+                          f"share {row['share_all'] * 100:.2f}%")
+            finally:
+                if "--days" in argv:      # the background run started by SessionStart
+                    try:
+                        os.unlink(cost_path() + ".computing")
+                    except OSError:
+                        pass
         elif argv and argv[0] == "line":
             print(line())
         else:
