@@ -28,8 +28,9 @@ two drift on the numbers below.
    any count goes UP. Machines catch about half of accessibility
    problems (Deque's study: 57% by count), so a pass means "nothing a
    machine can see", never "good".
-2. **Two separate reviews, once, when a website pull request opens**
-   (RULED 2026-11-19). Wince and Wren each mark every rule pass or fail
+2. **Two separate reviews, when the site's Plan board feature is marked
+   Checked** (RULED 2026-11-20; it replaced the 11-19 "when a pull request
+   opens", which was never built). Wince and Wren each mark every rule pass or fail
    and rate each problem 0 (not a problem) to 4 (catastrophe), without
    seeing each other's notes. Two reviewers is under Nielsen's three;
    that weak spot is known, not hidden.
