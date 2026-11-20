@@ -249,6 +249,28 @@ def read_transcript(path: str) -> list[dict]:
     return entries
 
 
+def transcript_for(payload: dict) -> str:
+    """The transcript of whoever is about to edit.
+
+    Inside a helper agent (a subagent), Claude Code hands every hook the MAIN
+    chat's transcript_path plus the helper's agent_id. The helper's own turns,
+    its reads included, live in a separate file next to it:
+    <session>/subagents/agent-<agent_id>.jsonl. Reading the main file made the
+    gate refuse a helper's edits forever, however many docs it opened (found
+    2026-11-20: Third Eye's stylesheet, refused six times after both reads).
+    """
+    import os
+
+    main_path = payload.get("transcript_path") or ""
+    agent_id = str(payload.get("agent_id") or "").strip()
+    if main_path and agent_id and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", agent_id):
+        root, _ext = os.path.splitext(main_path)
+        own = os.path.join(root, "subagents", f"agent-{agent_id}.jsonl")
+        if os.path.isfile(own):
+            return own
+    return main_path
+
+
 ALL_DOCS = (DESIGN_MD, CONSOLE_RECORD, DASHBOARD_PHIL, BRAID_SPEC, BRANDING, PALETTE)
 
 
@@ -527,6 +549,30 @@ def self_test() -> int:
            [mk_bash("ls"), side(mk_read("x/skills/web-standard/SKILL.md"))],
            "a main transcript: a read inside a subagent's turn does not count for the main chat")
 
+    # -- a helper agent's hook gets the MAIN transcript plus its agent_id --------
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        main_t = os.path.join(d, "sess.jsonl")
+        open(main_t, "w").close()
+        own_dir = os.path.join(d, "sess", "subagents")
+        os.makedirs(own_dir)
+        own_t = os.path.join(own_dir, "agent-abc123.jsonl")
+        with open(own_t, "w", encoding="utf-8") as f:
+            f.write(json.dumps({**mk_read("x/skills/web-standard/SKILL.md"), "isSidechain": True}) + "\n")
+        if transcript_for({"transcript_path": main_t, "agent_id": "abc123"}) != own_t:
+            fails.append("a helper's hook must read the helper's own transcript")
+        if transcript_for({"transcript_path": main_t}) != main_t:
+            fails.append("the main chat's hook must read the main transcript")
+        if transcript_for({"transcript_path": main_t, "agent_id": "zzz"}) != main_t:
+            fails.append("an agent_id with no file falls back to the main transcript")
+        if transcript_for({"transcript_path": main_t, "agent_id": "../../x"}) != main_t:
+            fails.append("an agent_id that is a path must be ignored")
+        if verdict("site/index.html", "<h1>Hi</h1>",
+                   read_transcript(transcript_for({"transcript_path": main_t, "agent_id": "abc123"}))) is not None:
+            fails.append("end to end: a helper that read the standard must be allowed")
+
     # -- fail-open plumbing ----------------------------------------------------
     try:
         verdict("loom/render.py", None, [])  # type: ignore[arg-type]
@@ -553,7 +599,7 @@ def self_test() -> int:
         for f in fails:
             print("SELF-TEST FAIL:", f)
         return 1
-    print("self-test: 32 cases passed")
+    print("self-test: 37 cases passed")
     return 0
 
 
@@ -578,7 +624,7 @@ def main() -> None:
         sys.exit(0)
 
     content = _content_of(tool_name, tool_input)
-    entries = read_transcript(payload.get("transcript_path") or "")
+    entries = read_transcript(transcript_for(payload))
 
     try:
         reason = verdict(path, content, entries)
