@@ -269,8 +269,19 @@ def docs_read(entries: list[dict] | None) -> set[str]:
     """Every design doc this session has evidence of having opened."""
 
     found: set[str] = set()
+    # A subagent's transcript is its OWN file, and every entry in it is marked
+    # isSidechain. Skipping those (right for a main transcript that carries a
+    # subagent's turns inline) made the gate blind to every read a subagent
+    # did, so a subagent could never edit a design or website file, even after
+    # opening the docs (found 2026-11-20 by the website-standard agent: refused
+    # three times after reading both files). Count sidechain entries when the
+    # whole transcript is one.
+    assistant = [e for e in (entries or []) if isinstance(e, dict) and e.get("type") == "assistant"]
+    own_sidechain = bool(assistant) and all(e.get("isSidechain") for e in assistant)
     for e in entries or []:
-        if e.get("type") != "assistant" or e.get("isSidechain"):
+        if not isinstance(e, dict) or e.get("type") != "assistant":
+            continue
+        if e.get("isSidechain") and not own_sidechain:
             continue
         content = (e.get("message") or {}).get("content")
         if not isinstance(content, list):
@@ -505,6 +516,17 @@ def self_test() -> int:
     if "web-standard" not in r:
         fails.append("the refusal must name the Web Standard skill")
 
+    # -- a subagent's own transcript (2026-11-20) -------------------------------
+    def side(entry: dict) -> dict:
+        return {**entry, "isSidechain": True}
+
+    allow("site/index.html", "<h1>Hi</h1>",
+          [side(mk_read("x/skills/web-standard/SKILL.md"))],
+          "a subagent's own transcript: every entry is sidechain, and its reads count")
+    refuse("site/index.html", "<h1>Hi</h1>",
+           [mk_bash("ls"), side(mk_read("x/skills/web-standard/SKILL.md"))],
+           "a main transcript: a read inside a subagent's turn does not count for the main chat")
+
     # -- fail-open plumbing ----------------------------------------------------
     try:
         verdict("loom/render.py", None, [])  # type: ignore[arg-type]
@@ -531,7 +553,7 @@ def self_test() -> int:
         for f in fails:
             print("SELF-TEST FAIL:", f)
         return 1
-    print("self-test: 30 cases passed")
+    print("self-test: 32 cases passed")
     return 0
 
 
