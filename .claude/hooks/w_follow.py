@@ -53,17 +53,11 @@ CHECKED_AT = {7: 3, 5: 2}
 BOARD_TOOL_SUFFIX = "ArtifactData"
 
 
-def _checked_done(st) -> bool | None:
-    """Checked done in a stage list? None when the list is not a board row."""
-    if isinstance(st, list) and len(st) in CHECKED_AT:
-        return st[CHECKED_AT[len(st)]] == "done"
-    return None
-
-
 def _board_writes(inp: dict) -> list[dict]:
     act = inp.get("action")
     if act in ("set", "update"):
-        return [{"collection": inp.get("collection"), "doc_id": inp.get("doc_id"), "data": inp.get("data")}]
+        return [{"collection": inp.get("collection"), "doc_id": inp.get("doc_id"),
+                 "data": inp.get("data"), "file_path": inp.get("file_path")}]
     if act == "batch":
         return [w for w in inp.get("writes") or [] if isinstance(w, dict) and w.get("op") in ("set", "update")]
     return []
@@ -73,73 +67,75 @@ def _is_features(col) -> bool:
     return str(col or "").split("/")[-1] == "features"
 
 
-def _epoch(ts: str) -> float:
+def _write_data(w: dict):
+    """The fields a write sends: inline `data`, or the JSON file named by
+    `file_path` (Wince 2026-11-19: real batches on this board use file_path)."""
+    if isinstance(w.get("data"), dict):
+        return w["data"]
+    fp = w.get("file_path")
+    if fp:
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                d = json.load(fh)
+            return d if isinstance(d, dict) else None
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _when(v) -> float | None:
     try:
-        return _dt.datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc).timestamp()
+        t = _dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
     except ValueError:
-        return 0.0
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_dt.timezone.utc)
+    return t.timestamp()
+
+
+CHECKED_WINDOW = (2 * 3600, 15 * 60)   # a Checked date up to 2 h before the write, or 15 min after
 
 
 class CheckedWatch:
-    """Remembers, across the whole session, each feature's Checked state as Claude
-    last READ it (an ArtifactData read saved with out_dir: the file on disk, if it
-    was written before the write being judged) or last WROTE it. A write fires
-    when it turns Checked to done and the remembered state was not done, or is
-    unknown (no read on record: a review is owed rather than skipped).
-    Wince 2026-11-19: the first version's "frontier" rule missed rows with Built
-    already done (CO-1, CO-4..7) and re-fired on rows re-sent at the frontier."""
+    """The trigger is the Checked DATE (Wince 2026-11-19, round 2). Skyne's
+    plan_board.py check refuses Checked done without stageDates.checked, and
+    the board page writes that date on every tap, so marking Checked means
+    writing a fresh Checked date. A write fires when it sets
+    stageDates.checked to a time near the write itself, and to a value this
+    session has not already written for that feature. Re-sending a row
+    (Built, Live, the Used number two weeks on) carries the OLD date, so it is
+    quiet. Not seen: a Checked marked with no date (the nightly copy-back
+    dates it and says so), and a re-send inside two hours of the mark from a
+    session that did not make the mark."""
 
     def __init__(self):
-        self.known = {}          # doc_id -> bool (Checked done)
-        self.read_dirs = []      # out_dir of each features read, in order
-
-    def note_call(self, name, inp) -> None:
-        if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
-            return
-        if inp.get("action") in ("get", "list", "query") and _is_features(inp.get("collection")) and inp.get("out_dir"):
-            self.read_dirs.append(str(inp["out_dir"]))
-
-    def _read_state(self, fid: str, ts: str):
-        when = _epoch(ts)
-        for d in reversed(self.read_dirs):
-            fp = os.path.join(d, "features", fid + ".json")
-            try:
-                if when and os.path.getmtime(fp) > when + 1:
-                    continue                      # re-read AFTER this write: not the before-state
-                with open(fp, encoding="utf-8") as fh:
-                    return _checked_done((json.load(fh) or {}).get("s"))
-            except (OSError, ValueError):
-                continue
-        return None
+        self.sent = {}           # doc_id -> Checked date this session wrote
 
     def marks(self, name, inp, ts: str = "") -> list:
-        """Feature ids this call turns Checked to done. Also updates memory."""
+        """Feature ids this call marks Checked. Also remembers what it wrote."""
         if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
             return []
-        self.note_call(name, inp)
+        now = _when(ts) if ts else None
         out = []
         for w in _board_writes(inp):
-            data = w.get("data")
-            if not _is_features(w.get("collection")) or not isinstance(data, dict):
+            if not _is_features(w.get("collection")):
+                continue
+            data = _write_data(w)
+            sd = (data or {}).get("stageDates")
+            v = sd.get("checked") if isinstance(sd, dict) else None
+            if not v:
                 continue
             fid = str(w.get("doc_id") or "?")
-            now = _checked_done(data.get("s"))
-            sd = data.get("stageDates")
-            if now is None and isinstance(sd, dict) and sd.get("checked"):
-                now = True
-            if now is None:
-                continue
-            before = self.known.get(fid)
-            if before is None:
-                before = self._read_state(fid, ts)
-            if now and before is not True:
+            at = _when(v)
+            fresh = at is not None and (now is None or now - CHECKED_WINDOW[0] <= at <= now + CHECKED_WINDOW[1])
+            if fresh and self.sent.get(fid) != v:
                 out.append(fid)
-            self.known[fid] = now
+            self.sent[fid] = v
         return out
 
 
 def checked_marks(name, inp, watch: "CheckedWatch | None" = None, ts: str = "") -> list:
-    """Feature ids this one call turns Checked to done (a fresh watch: nothing known)."""
+    """Feature ids this one call marks Checked (a fresh watch: nothing known)."""
     return (watch or CheckedWatch()).marks(name, inp, ts)
 
 
@@ -502,12 +498,13 @@ def queue_lines(hours: int = 24) -> list[str]:
 
 BASELINE_LABEL_SHARE = 0.03          # DECISIONS R9: ~3% of replies carry a W label (unused since 2026-11-19; kept for old readers)
 FORCED_PASSES_ALERT = 12             # R16/R19: forced passes a day that re-open the call
+CHECKED_SINCE = "2026-11-20"         # first full ET day under the Checked-only trigger (RULED 2026-11-19)
 
 
 def heartbeat_lines(today: str | None = None) -> list[str]:
-    """Speaks only when something is wrong: a gate that did not run, a label share
-    under half its baseline over 7 days, or more forced passes in a day than R16
-    allows. Quiet otherwise (the cost line is the standing readout)."""
+    """Speaks only when something is wrong: a gate that did not run, or more
+    forced passes in a day than R16 allows (counted from CHECKED_SINCE, split by
+    what forced them). Quiet otherwise (the cost line is the standing readout)."""
     from w_cost import et_day, et_today, prev_day
     today = today or et_today()
     rows = [r for r in read_jsonl(log_path()) if not r.get("test")]
@@ -522,12 +519,15 @@ def heartbeat_lines(today: str | None = None) -> list[str]:
             out.append(f"{gate}_gate did not run: no w-follow.jsonl row in 24 hours while chats "
                        f"were active. The gate may not be delivered; check hook delivery.")
     yday = prev_day(today)
-    forced = sum(1 for r in rows if r.get("action") == "refused"
-                 and et_day(str(r.get("utc"))) == yday)
-    if forced > FORCED_PASSES_ALERT:
-        out.append(f"{forced} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day, "
-                   f"with the triggers already narrowed to the Checked stage (RULED 2026-11-19): "
-                   f"tell Garrett and ask whether Checked-only is still worth its cost.")
+    # Days before the Checked-only rule ran under the old, wide triggers: not this rule's cost
+    # (Wince 2026-11-19: the 11-19 count would have blamed Checked for 101 old-rule refusals).
+    refused = [r for r in rows if r.get("action") == "refused"
+               and et_day(str(r.get("utc"))) == yday and yday >= CHECKED_SINCE]
+    chk = sum(1 for r in refused if "checked" in (r.get("triggers") or []))
+    if len(refused) > FORCED_PASSES_ALERT:
+        out.append(f"{len(refused)} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day: "
+                   f"{chk} from a feature marked Checked, {len(refused) - chk} from a W agent run or an "
+                   f"unfiled grade. Tell Garrett and ask whether that part is still worth its cost.")
     # The label-share watch was cut 2026-11-19: it guarded the label trigger, which is retired.
     return out
 
@@ -561,8 +561,8 @@ def review_lines(today: str | None = None) -> list[str]:
         return []
     return [f"DAY-14 REVIEW DUE: the W follow-up gates went live on {g['go_live']} (R19/R22). "
             f"Run `python3 {os.path.join(HERE, 'w_cost.py')} review` and bring Garrett the real numbers "
-            f"(runs a day, share of his tokens, Max weekly % trend), then ask: keep as is / publishes "
-            f"only / labels only / one pass. After he answers, run it with `review --done`."]
+            f"(runs a day, share of his tokens, Max weekly % trend), then ask: keep Checked-only as is / "
+            f"Wince only at Checked (no Wren) / turn the gates off. After he answers, run it with `review --done`."]
 
 
 # -------------------------------------------------------------------- self-test
@@ -696,6 +696,22 @@ def self_test() -> int:
         g["reviewed"] = True
         json.dump(g, open(gp, "w"))
         check(review_lines("2026-12-05") == [], "after the review is marked done it is silent")
+        lp = os.path.join(d, "wf.jsonl")
+        os.environ["SKYNE_W_FOLLOW_LOG"] = lp
+        with open(lp, "w", encoding="utf-8") as fh:
+            for i in range(13):
+                fh.write(json.dumps({"gate": "wince", "action": "refused", "utc": "2026-11-19T20:00:%02dZ" % i,
+                                     "triggers": ["publish"]}) + "\n")
+            for i in range(13):
+                fh.write(json.dumps({"gate": "wince", "action": "refused", "utc": "2026-11-21T20:00:%02dZ" % i,
+                                     "triggers": ["checked"] if i < 10 else ["agent-w"]}) + "\n")
+        forced = lambda day: [x for x in heartbeat_lines(day) if "forced" in x]
+        check(forced("2026-11-20") == [],
+              "PLANTED: old-rule refusals (before the Checked-only day) do not set off the alert (Wince round 2)")
+        hb = forced("2026-11-22")
+        check(len(hb) == 1 and "10 from a feature marked Checked, 3 from a W agent run" in hb[0],
+              "PLANTED: the alert splits Checked refusals from the ones the change did not touch")
+        os.environ.pop("SKYNE_W_FOLLOW_LOG", None)
         os.environ.pop("SKYNE_W_FOLLOW_GOLIVE", None)
     saved = os.environ.get("CLAUDE_CODE_REMOTE")
     os.environ["CLAUDE_CODE_REMOTE"] = "true"

@@ -188,7 +188,8 @@ def self_test() -> int:
     # Claude marks feature BL-1 Checked on the Plan board (seven stages, Checked = index 3)
     mark = lambda sec: tool(sec, "ArtifactData", {"action": "update", "url": "https://claude.ai/artifact/X",
                                                   "collection": "features", "doc_id": "BL-1", "if_version": 2,
-                                                  "data": {"s": ["done"] * 4 + ["no"] * 3}}, tid=f"m{sec}")
+                                                  "data": {"s": ["done"] * 4 + ["no"] * 3,
+                                                           "stageDates": {"checked": "2026-11-17T15:00:%02dZ" % sec}}}, tid=f"m{sec}")
     publish = lambda sec: tool(sec, "Artifact", {"file_path": "C:\\x\\page.html", "icon": "chart",
                                                  "description": "d"})
 
