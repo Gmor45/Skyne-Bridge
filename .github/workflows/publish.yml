@@ -1,0 +1,123 @@
+name: publish
+
+# Publish-on-merge for every site (Web Standard rule S3, RULED 2026-11-20:
+# deploys are fully automatic). A site repo calls this on a push to main:
+#
+#   on:
+#     push: { branches: [main], paths: ["app/**"] }
+#     workflow_dispatch:
+#   concurrency: { group: publish, cancel-in-progress: true }
+#   jobs:
+#     publish:
+#       uses: Gmor45/Skyne-Bridge/.github/workflows/publish.yml@main
+#       with:
+#         command: deploy --config app/wrangler.jsonc
+#         access_host: projectbluelink.org/app   # signed-in sites only
+#       secrets:
+#         DEPLOY_DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+#
+# It does not deploy. It asks Gmor45/cloudflare-deploy (the only repo holding
+# Cloudflare's keys) to run wrangler at this exact commit, then:
+#   - finds ITS run by a request id in the run title, and fails if one
+#     request started more than one run (miss 2026-09-11: two publishes);
+#   - lets the runner refuse a signed-in site whose Access lock is missing,
+#     BEFORE it goes live (access_host);
+#   - waits, and goes red if the publish did not succeed. A dispatch that
+#     worked and a deploy that worked are different claims.
+# Copied from Skyne's publish-core.yml (2026-09-06), which proved the pattern.
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: "wrangler arguments, e.g. deploy --config app/wrangler.jsonc"
+        type: string
+        required: true
+      access_host:
+        description: "Signed-in sites: the Access-protected address, e.g. projectbluelink.org/app"
+        type: string
+        default: ""
+    secrets:
+      DEPLOY_DISPATCH_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # FAIL LOUDLY rather than skip (house-rules 21): a publish step that
+      # quietly does nothing reads as covered.
+      - name: The publish key is present
+        env:
+          TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::DEPLOY_DISPATCH_TOKEN is not set in $REPO, so this merge was NOT published."
+            echo "It is a fine-grained token that can only start workflows in Gmor45/cloudflare-deploy"
+            echo "(Repository access: only cloudflare-deploy; Permissions: Actions read and write)."
+            echo "Garrett adds it once per repo: Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Ask cloudflare-deploy to publish this commit
+        id: fire
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          COMMAND: ${{ inputs.command }}
+          ACCESS_HOST: ${{ inputs.access_host }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RID: ${{ github.repository }}@${{ github.sha }}#${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          echo "rid=$RID" >> "$GITHUB_OUTPUT"
+          gh workflow run wrangler-command.yml --repo Gmor45/cloudflare-deploy --ref main \
+            --field command="$COMMAND" --field repo="$REPO" --field ref="$SHA" \
+            --field request_id="$RID" --field access_host="$ACCESS_HOST"
+          echo "asked to publish $REPO at $SHA (request $RID)"
+
+      - name: Exactly one publish started, and it succeeded
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          RID: ${{ steps.fire.outputs.rid }}
+        run: |
+          set -euo pipefail
+          find_runs() {
+            gh run list --repo Gmor45/cloudflare-deploy --workflow wrangler-command.yml --limit 30 \
+              --json databaseId,displayTitle,status,conclusion,url \
+              --jq "[.[] | select(.displayTitle | contains(\"[$RID]\"))]"
+          }
+          RUNS="[]"
+          for _ in $(seq 1 30); do
+            sleep 5
+            RUNS=$(find_runs)
+            [ "$(echo "$RUNS" | jq length)" -gt 0 ] && break
+          done
+          N=$(echo "$RUNS" | jq length)
+          if [ "$N" -eq 0 ]; then
+            echo "::error::Asked, but no cloudflare-deploy run carrying this request appeared within ~2.5 minutes."
+            exit 1
+          fi
+          # Give a stray second run time to show itself before judging.
+          sleep 10
+          RUNS=$(find_runs); N=$(echo "$RUNS" | jq length)
+          if [ "$N" -ne 1 ]; then
+            echo "::error::One publish request started $N runs (it must be exactly 1). $(echo "$RUNS" | jq -r '[.[].url] | join(" ")')"
+            exit 1
+          fi
+          ID=$(echo "$RUNS" | jq -r '.[0].databaseId'); URL=$(echo "$RUNS" | jq -r '.[0].url')
+          echo "publish run: $URL"
+          for _ in $(seq 1 120); do
+            STATE=$(gh run view "$ID" --repo Gmor45/cloudflare-deploy --json status,conclusion --jq '.status + "/" + (.conclusion // "")')
+            case "$STATE" in
+              completed/success) echo "::notice::Published. $URL"; exit 0 ;;
+              completed/*) echo "::error::The publish ran and did NOT succeed ($STATE). $URL"; exit 1 ;;
+            esac
+            sleep 6
+          done
+          echo "::error::The publish did not finish within ~12 minutes. $URL"
+          exit 1

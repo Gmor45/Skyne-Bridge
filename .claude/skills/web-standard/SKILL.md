@@ -155,8 +155,8 @@ two drift on the numbers below.
 - **S2 Public forms.** Cloudflare Turnstile, a hidden trap field, a
   per-address speed limit, and a daily cap. No picture puzzles.
 - **S3 Publishing.** A merge to main publishes the site automatically
-  through Gmor45/cloudflare-deploy, with no approval step (RULED
-  2026-11-20). One merge starts exactly one publish (it carries a request
+  through Gmor45/cloudflare-deploy (this repo's `.github/workflows/publish.yml`),
+  with no approval step (RULED 2026-11-20). One merge starts exactly one publish (it carries a request
   id and checks that one run carries it). A signed-in site's lock is
   checked BEFORE the new version goes live.
 - **S4 Payments** wait for a lawyer and Stripe's rules for political
