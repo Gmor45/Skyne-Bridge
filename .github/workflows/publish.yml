@@ -71,9 +71,15 @@ jobs:
           ACCESS_HOST: ${{ inputs.access_host }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          RID: ${{ github.repository }}@${{ github.sha }}#${{ github.run_id }}.${{ github.run_attempt }}
+          RUN: ${{ github.repository }}@${{ github.sha }}#${{ github.run_id }}.${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          # One caller run can publish in several steps (Project-Bluelink: the
+          # database, then the site), each calling this workflow with the same
+          # run id. Tag each request with a hash of what it runs, so the check
+          # below finds ITS run and not its sibling's (2026-11-20: Bluelink's
+          # site step saw both runs and went red though both had succeeded).
+          RID="$RUN.$(printf '%s|%s' "$COMMAND" "$ACCESS_HOST" | sha1sum | cut -c1-8)"
           echo "rid=$RID" >> "$GITHUB_OUTPUT"
           gh workflow run wrangler-command.yml --repo Gmor45/cloudflare-deploy --ref main \
             --field command="$COMMAND" --field repo="$REPO" --field ref="$SHA" \
