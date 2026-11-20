@@ -71,7 +71,20 @@ WHAT IT DOES NOT DO (house-rules 21 point 5)
   has rows for the turn (it logs agents, not skills), the log wins and a
   research run is missed if another W also ran and Wince followed that W.
 
-STAGE 2 (RULED 2026-11-16, R5 R9 R10 R12 R19; plan Piece C)
+CHECKED ONLY (RULED 2026-11-19, Skyne DECISIONS; ends the wide trial below early)
+-------------------------------------------------------------------------------
+The label and publish triggers below are RETIRED. What owes the follow-up now is
+a turn that marks a Plan board feature's Checked stage done (an ArtifactData
+write, see w_follow.checked_marks). Checked is defined on the board as "Passed
+Wince and Wren", so Wren runs first and ONE Wince pass after him. Measured
+before the change: 92 of 107 forced follow-ups since go-live came from labels
+or publishes. The agent-W trigger and the filed-check are unchanged. Labels and
+publishes are still LOGGED (`old_rule`) so the cost tracker can show what the
+retired rule would have fired on. Not seen: Garrett tapping Checked on the
+board himself (his call, not a Claude claim), and a mark written by a subagent
+or a script.
+
+STAGE 2 (RULED 2026-11-16, R5 R9 R10 R12 R19; plan Piece C; label/publish retired 2026-11-19)
 -----------------------------------------------------------
 Two NEW triggers join the agent-W one, and the filed-check is rebuilt:
 * A reply LABELED as a W (first or newest text block of the turn, any label but
@@ -482,19 +495,18 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
         ev["always"].append(refusal(ws, source))
         ev["triggers"].append("agent-w")
 
-    # --- the NEW triggers (label, publish), under the switch --------------------
+    # --- the Checked trigger (RULED 2026-11-19), under the switch ---------------
     labels = facts["labels"] - {"Wince"}
     pubs = facts["publishes"]
     first_last = [facts["first_text"], facts["last_text"]]
     ev["labeled"] = bool(labels)
     ev["claude_wrote"] = bool(facts["writes"]) and any(CLAUDE_LABEL.match(t) for t in first_last)
+    ev["old_rule"] = bool(labels or pubs)   # logged only: what the retired wide trial would have fired on
     why = []
-    if labels:
-        why.append("a reply labeled " + "/".join(sorted(f"{x}:" for x in labels)))
-        ev["triggers"].append("label")
-    if pubs:
-        why.append("a publish (" + ", ".join(sorted({n_ for _, n_ in pubs})) + ")")
-        ev["triggers"].append("publish")
+    marked = sorted({fid for _, fid in facts["checked"]})
+    if marked:
+        why.append("a Plan board feature marked Checked (" + ", ".join(marked) + ")")
+        ev["triggers"].append("checked")
     wren_owed = False
     if why:
         import wren_gate
@@ -510,7 +522,7 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
         ev["satisfied"] = satisfied
         if not satisfied:
             ev["required"].append(
-                "W follow-up (R5/R9, enforced from day one): this turn has "
+                "W follow-up (Checked means passed Wince and Wren, RULED 2026-11-19): this turn has "
                 + " and ".join(why) + f", and no `wince` agent run has finished since "
                 f"{'the work was last changed' if not wren_owed else 'the work was made and Wren tried it'}. "
                 + ("Run the `wren` agent first (he tries what was made, the lazy way), then ONE "
@@ -558,6 +570,7 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
                           "cloud": ev["cloud"], "session_id": ev["session"],
                           "triggers": sorted(set(ev["triggers"])),
                           "owed_new": bool(ev["required"]), "labeled": ev["labeled"],
+                          "old_rule": ev.get("old_rule", False),
                           "claude_wrote": ev["claude_wrote"],
                           "unknown_figma": sorted(set(ev["facts"]["unknown_figma"]))})
         if ev["mode"] == "enforce" and ev["session"] and not ev["cloud"]:
@@ -798,6 +811,12 @@ def self_test() -> int:
         def agent(sec, who, tid, prompt="do it"):
             return tu(sec, "Agent", {"subagent_type": who, "prompt": prompt}, tid)
 
+        def mk(sec, st=None):   # Claude marks feature BL-1 Checked on the Plan board
+            return tu(sec, "ArtifactData", {"action": "update", "url": "https://claude.ai/artifact/X",
+                                            "collection": "features", "doc_id": "BL-1", "if_version": 3,
+                                            "data": {"s": st or ["done", "done", "done", "done", "no", "no", "no"]}},
+                      f"m{sec}")
+
         def sync_back(sec, tid, text="done"):
             return {"type": "user", "timestamp": t % sec, "toolUseResult": {"status": "completed"},
                     "message": {"content": [{"type": "tool_result", "tool_use_id": tid,
@@ -822,48 +841,70 @@ def self_test() -> int:
         def go(*entries, log=(), **kw):
             return decide(transcript(*entries, **kw), list(log))
 
-        # the label trigger
-        out = go(u2, says(1, "Wistin: built it."), wr(2), says(3, "Wistin: done."))
-        check(bool(out) and "W follow-up" in out["reason"] and "labeled Wistin:" in out["reason"],
-              "PLANTED: a Wistin-labeled reply with no Wince run is refused")
-        check(flog()[-1]["action"] == "refused" and flog()[-1]["labeled"] is True,
+        # the Checked trigger (RULED 2026-11-19); the label trigger is retired
+        check(go(u2, says(1, "Wistin: built it."), wr(2), says(3, "Wistin: done.")) is None
+              and flog()[-1]["labeled"] is True and flog()[-1]["old_rule"] is True,
+              "a Wistin-labeled reply that wrote a file no longer owes Wince; the log says the old rule would have")
+        out = go(u2, says(1, "Built it."), wr(2), mk(3), says(4, "Marked it Checked."))
+        check(bool(out) and "W follow-up" in out["reason"] and "marked Checked (BL-1)" in out["reason"],
+              "PLANTED: marking a board feature Checked with no Wince run is refused")
+        check(flog()[-1]["action"] == "refused" and flog()[-1]["triggers"] == ["checked"],
               "the refusal is logged with its trigger")
+        check(go(u2, mk(2, ["done"] * 5 + ["no"] * 2), says(3, "Marked Live.")) is None,
+              "re-sending a row while marking Built/Live (Checked already behind it) does not fire again")
+        out = go(u2, mk(2, ["done", "done", "done", "no", "no"]), says(3, "Old board."))
+        check(bool(out), "PLANTED: a five-stage row (before 2026-11-19) marked Checked still fires")
+        out = go(u2, tu(2, "ArtifactData", {"action": "batch", "url": "u", "writes": [
+                 {"op": "update", "collection": "inbox", "doc_id": "IN-1", "data": {"status": "open"}},
+                 {"op": "update", "collection": "features", "doc_id": "CO-4",
+                  "data": {"s": ["no", "done", "done", "done", "no", "no", "no"]}, "if_version": 2}]}, "bt"),
+                 says(3, "Done."))
+        check(bool(out) and "CO-4" in out["reason"], "PLANTED: a batch write that marks Checked fires")
+        out = go(u2, tu(2, "ArtifactData", {"action": "update", "url": "u", "collection": "features",
+                                            "doc_id": "SK-1", "data": {"stageDates": {"checked": "2026-11-19"}}}, "sd"),
+                 says(3, "Dated."))
+        check(bool(out) and "SK-1" in out["reason"], "PLANTED: setting stageDates.checked alone fires")
+        check(go(u2, tu(2, "ArtifactData", {"action": "list", "url": "u", "collection": "features"}, "rd"),
+                 says(3, "Read it.")) is None, "reading the board fires nothing")
+        check(go(u2, tu(2, "ArtifactData", {"action": "update", "url": "u", "collection": "inbox", "doc_id": "IN-2",
+                                            "data": {"s": ["done"] * 7}}, "ib"), says(3, "x")) is None,
+              "a write outside features fires nothing")
         ok_run = [agent(4, "wince", "wc1"), sync_back(6, "wc1")]
-        check(go(u2, says(1, "Wistin: built it."), wr(2), *ok_run, says(7, "Wistin: done."),
+        check(go(u2, says(1, "Wistin: built it."), wr(2), mk(3), *ok_run, says(7, "Wistin: done."),
                  log=[]) is not None,
               "PLANTED: a synchronous Wince that came back owes its filing, so work-then-Wince "
               "without filing is still refused (filed-check)")
         queue_row(os.environ["SKYNE_GRADES_QUEUE"], session="s1", queued_utc="2026-11-17T15:00:08Z",
                   subject="x", key="k1")
-        check(go(u2, says(1, "Wistin: built it."), wr(2), *ok_run, says(7, "Wistin: done.")) is None
+        check(go(u2, says(1, "Wistin: built it."), wr(2), mk(3), *ok_run, says(7, "Wistin: done.")) is None
               and flog()[-1]["action"] == "satisfied",
               "work, then Wince, the grade queued under THIS session, then 'Wistin:' passes")
-        check(go(u2, says(1, "Wistin: built it."), *ok_run, wr(7), says(8, "Wistin: done.")) is not None,
+        check(go(u2, says(1, "Wistin: built it."), *ok_run, wr(7), mk(7), says(8, "Wistin: done.")) is not None,
               "PLANTED: a Wince run BEFORE the last write does not count")
         out = go(u2, says(1, "Wince: I reviewed it, it is fine."))
         check(out is None, "a 'Wince:' label alone triggers nothing (no work to follow)")
-        out = go(u2, says(1, "Wistin: built it."), wr(2), says(3, "Wince: it looks great."))
+        out = go(u2, says(1, "Wistin: built it."), wr(2), mk(3), says(4, "Wince: it looks great."))
         check(bool(out) and "W follow-up" in out["reason"],
               "PLANTED: a 'Wince:' label never satisfies the follow-up (only an agent run does)")
         check(go(u2, says(1, "Claude: here is a quick answer."), says(2, "Claude: and the follow-up.")) is None
               and flog()[-1]["action"] == "quiet",
               "a quiet Claude: Q&A turn triggers nothing")
         out = go(u2, says(1, "Weir: I would choose the second."))
-        check(bool(out), "PLANTED: a W label on a plain Q&A reply owes a Wince run (R9, wide trial)")
-        # publish
+        check(out is None, "a W label on a plain Q&A reply no longer owes a Wince run (wide trial ended 2026-11-19)")
+        # publish: retired as a trigger, still logged
         out = go(u2, art(2), says(3, "Here is the page."))
-        check(bool(out) and "a publish (Artifact)" in out["reason"],
-              "PLANTED: a real Artifact publish with no label is refused")
+        check(out is None and flog()[-1]["old_rule"] is True,
+              "an Artifact publish no longer owes a Wince run; the log still records it")
         check(go(u2, tu(2, "Artifact", {"action": "publish", "asset": True, "url": "u", "file_path": "a.png"}, "p1"),
                  says(3, "Uploaded.")) is None,
               "an asset upload is not a publish")
         fig = "mcp__a2e5608f-73d1-4432-84e6-22b3701e89d8__"
         out = go(u2, tu(2, fig + "generate_diagram", {"name": "flow", "mermaidSyntax": "graph TD"}, "f1"),
                  says(3, "Diagram made."))
-        check(bool(out), "PLANTED: a Figma generate_diagram triggers the follow-up")
+        check(out is None, "a Figma generate_diagram no longer triggers the follow-up")
         out = go(u2, tu(2, fig + "get_screenshot", {"nodeId": "1:2"}, "f2"), says(3, "Looked."))
         check(out is None, "a Figma get_screenshot (a read) does not")
-        out = go(u2, tu(2, fig + "totally_new_tool", {}, "f3"), says(3, "Weir: x"))
+        out = go(u2, tu(2, fig + "totally_new_tool", {}, "f3"), mk(3), says(4, "Weir: x"))
         check(bool(out) and "Unknown Figma tool" in out["reason"],
               "an unknown Figma tool is flagged in the refusal and the log")
         check(flog()[-1]["unknown_figma"] == ["mcp__a2e5608f-73d1-4432-84e6-22b3701e89d8__totally_new_tool"]
@@ -875,17 +916,17 @@ def self_test() -> int:
         out = go(u2, agent(2, "haiku-mechanic", "hm1"), sync_back(3, "hm1"), says(4, "Moved the files."))
         check(out is None, "a haiku-mechanic agent run forces nothing (R8)")
         # Wren first, then ONE Wince pass after Wren
-        steps_wren_then_wince = [u2, says(1, "Wistin: built it."), wr(2), agent(3, "wren", "wn1"), sync_back(5, "wn1"),
+        steps_wren_then_wince = [u2, says(1, "Wistin: built it."), wr(2), mk(2), agent(3, "wren", "wn1"), sync_back(5, "wn1"),
                                  agent(6, "wince", "wc2"), sync_back(8, "wc2"), says(9, "Wistin: done.")]
         queue_row(os.environ["SKYNE_GRADES_QUEUE"], session="s1", queued_utc="2026-11-17T15:00:09Z", key="k2")
         check(go(*steps_wren_then_wince) is None, "Wren first, then Wince after it, filed: passes")
-        steps_wince_then_wren = [u2, says(1, "Wistin: built it."), wr(2), agent(3, "wince", "wc3"), sync_back(5, "wc3"),
+        steps_wince_then_wren = [u2, says(1, "Wistin: built it."), wr(2), mk(2), agent(3, "wince", "wc3"), sync_back(5, "wc3"),
                                  agent(6, "wren", "wn2"), sync_back(8, "wn2"), says(9, "Wistin: done.")]
         out = go(*steps_wince_then_wren)
         check(bool(out) and "Wren tried it" in out["reason"],
               "PLANTED: Wince that finished BEFORE Wren's try does not grade Wren's report")
         # same-second tie counts as after
-        tie = [u2, says(1, "Wistin: x"), wr(2), agent(3, "wince", "wc4"), sync_back(2, "wc4"), says(9, "Wistin: done.")]
+        tie = [u2, says(1, "Wistin: x"), wr(2), mk(2), agent(3, "wince", "wc4"), sync_back(2, "wc4"), says(9, "Wistin: done.")]
         check(go(*tie) is None, "a Wince run finishing in the same second as the last edit counts as after")
 
         # red-team lens 4: tagged, joined through the agentId, only a rounds row counts
@@ -955,12 +996,12 @@ def self_test() -> int:
         def set_mode(raw):
             with open(os.environ["SKYNE_W_FOLLOW_MODE"], "wb") as fh:
                 fh.write(raw)
-        trig = [u2, says(1, "Wistin: x"), wr(2), says(3, "Wistin: y")]
+        trig = [u2, says(1, "Wistin: x"), wr(2), mk(2), says(3, "Wistin: y")]
         for name, raw in (("plain", b"log"), ("UTF-8 BOM", b"\xef\xbb\xbflog\r\n"),
                           ("UTF-16", "log\r\n".encode("utf-16"))):
             set_mode(raw)
             check(go(*trig) is None and flog()[-1]["action"] == "log-would-refuse" and flog()[-1]["mode"] == "log",
-                  f"switch written as {name}: the label trigger logs and refuses nothing")
+                  f"switch written as {name}: the Checked trigger logs and refuses nothing")
         check(go(u2, agent(2, "wander", "wd2"), sync_back(3, "wd2"), says(4, "found it")) is not None,
               "log mode does not release the agent-W trigger (it blocks today, R10)")
         set_mode(b"banana")

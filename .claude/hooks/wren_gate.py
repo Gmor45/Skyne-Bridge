@@ -6,9 +6,17 @@ nothing that ever set him off; Garrett chose "After something new is built". The
 old trigger was a Wistin or Wick AGENT run. Since 2026-11-16 those two are labels,
 not agents, so the trigger is the work itself:
 
-WHAT IT CATCHES
----------------
-A reply is refused ONCE when, since Garrett's last message, either
+CHECKED ONLY (RULED 2026-11-19, Skyne DECISIONS)
+-------------------------------------------------
+The publish and maker-label triggers below are RETIRED. A reply is now refused
+ONCE when the turn marked a Plan board feature's Checked stage done (an
+ArtifactData write, w_follow.checked_marks) and no `wren` run finished after the
+turn's last edit. Checked means "Passed Wince and Wren" on the board, so this is
+the board's own definition, enforced. The escape line below still works.
+
+WHAT IT CAUGHT UNTIL 2026-11-19
+-------------------------------
+A reply was refused ONCE when, since Garrett's last message, either
 * a PUBLISH of something runnable happened (an Artifact publish that is not an
   asset upload), or
 * a MAKER label (Wistin:, Wick:, Ward:, Warden:, Whittle:) is on the first or
@@ -77,19 +85,20 @@ def escaped(entries: list[dict], boundary: int) -> bool:
 
 def wren_owed(facts: dict, entries: list[dict], boundary: int) -> bool:
     """Does this turn owe a Wren try? (before looking for his run)"""
+    return bool(facts["checked"]) and not escaped(entries, boundary)
+
+
+def old_rule(facts: dict) -> bool:
+    """What the retired 2026-11-16 trigger would have fired on. Logged, never enforced."""
     runnable = any(n == "Artifact" for _, n in facts["publishes"])
     made = bool(facts["labels"] & set(w_follow.MAKER_LABELS)) and bool(facts["writes"])
-    return (runnable or made) and not escaped(entries, boundary)
+    return runnable or made
 
 
 def refusal(facts: dict) -> str:
-    what = []
-    if any(n == "Artifact" for _, n in facts["publishes"]):
-        what.append("an Artifact publish")
-    mk = sorted(facts["labels"] & set(w_follow.MAKER_LABELS))
-    if mk and facts["writes"]:
-        what.append(f"a {'/'.join(m + ':' for m in mk)} turn that wrote a file")
-    return (f"Wren tries what is made (R5/R9, enforced from day one): this turn has "
+    marked = sorted({fid for _, fid in facts["checked"]})
+    what = [f"a Plan board feature marked Checked ({', '.join(marked)})"]
+    return (f"Wren tries what is made before it counts as Checked (RULED 2026-11-19): this turn has "
             f"{' and '.join(what)}, and no `wren` agent run has finished since. Before replying, "
             f"run the `wren` agent (load-house-rules:wren) on what was made: use it the way "
             f"Garrett would on a lazy day -- no docs, the obvious button -- and report where it "
@@ -133,8 +142,8 @@ def decide(payload: dict, log_rows: list[dict] | None = None, log_it: bool = Tru
     if log_it:
         w_follow.log_row({"gate": "wren", "action": action, "mode": mode, "cloud": cloud,
                           "session_id": session,
-                          "triggers": (["publish"] if any(n == "Artifact" for _, n in facts["publishes"]) else [])
-                          + (["maker-label"] if facts["labels"] & set(w_follow.MAKER_LABELS) and facts["writes"] else [])})
+                          "triggers": ["checked"] if facts["checked"] else [],
+                          "old_rule": old_rule(facts)})
         if mode == "enforce" and session and not cloud:
             w_follow.record_golive()
     return out
@@ -176,6 +185,10 @@ def self_test() -> int:
             {"type": "tool_use", "id": tid, "name": name, "input": inp}]}}
 
     write = lambda sec: tool(sec, "Write", {"file_path": "C:\\x\\a.py", "content": "print(1)"})
+    # Claude marks feature BL-1 Checked on the Plan board (seven stages, Checked = index 3)
+    mark = lambda sec: tool(sec, "ArtifactData", {"action": "update", "url": "https://claude.ai/artifact/X",
+                                                  "collection": "features", "doc_id": "BL-1", "if_version": 2,
+                                                  "data": {"s": ["done"] * 4 + ["no"] * 3}}, tid=f"m{sec}")
     publish = lambda sec: tool(sec, "Artifact", {"file_path": "C:\\x\\page.html", "icon": "chart",
                                                  "description": "d"})
 
@@ -201,15 +214,19 @@ def self_test() -> int:
         def logged():
             return read_jsonl(os.environ["SKYNE_W_FOLLOW_LOG"])
 
-        out = decide(transcript(user, said(1, "Wistin: here is the script."), write(2), said(3, "Wistin: done.")), [])
-        check(bool(out) and out["decision"] == "block" and "Wren tries what is made" in out["reason"],
-              "PLANTED: a Wistin: turn that wrote a file owes Wren")
+        check(decide(transcript(user, said(1, "Wistin: here is the script."), write(2), said(3, "Wistin: done.")), []) is None
+              and logged()[-1]["old_rule"] is True,
+              "a Wistin: turn that wrote a file no longer owes Wren (RULED 2026-11-19); the log says the old rule would have")
+        out = decide(transcript(user, said(1, "Here is the script."), write(2), mark(3), said(4, "Marked Checked.")), [])
+        check(bool(out) and out["decision"] == "block" and "Wren tries what is made" in out["reason"]
+              and "BL-1" in out["reason"],
+              "PLANTED: marking a board feature Checked with no Wren run owes Wren")
         check(logged()[-1]["action"] == "refused" and logged()[-1]["gate"] == "wren",
               "the refusal is logged to w-follow.jsonl")
-        check(decide(transcript(user, said(1, "Wistin: here."), write(2), *wren_done(3), said(6, "Wistin: done.")), []) is None
+        check(decide(transcript(user, said(1, "Wistin: here."), write(2), mark(2), *wren_done(3), said(6, "Wistin: done.")), []) is None
               and logged()[-1]["action"] == "satisfied",
               "a Wren run that finished after the write satisfies it")
-        check(decide(transcript(user, said(1, "Wistin: here."), *wren_done(2), write(5), said(6, "Wistin: done.")), [])
+        check(decide(transcript(user, said(1, "Wistin: here."), *wren_done(2), write(5), mark(5), said(6, "Wistin: done.")), [])
               is not None, "PLANTED: a Wren run BEFORE the last write does not count")
         check(decide(transcript(user, said(1, "Weir: I would pick B."), said(2, "Weir: so B.")), []) is None,
               "a non-maker label (Weir) with no file is quiet")
@@ -217,33 +234,32 @@ def self_test() -> int:
               "a non-maker label that wrote a file is Wince's, not Wren's")
         check(decide(transcript(user, said(1, "Claude: quick fix."), write(2), said(3, "Claude: done.")), []) is None,
               "a Claude:-labeled turn that wrote a file triggers nothing (a named blind spot)")
-        check(decide(transcript(user, said(1, "Wistin: lore."), write(2),
+        check(decide(transcript(user, said(1, "Wistin: lore."), write(2), mark(2),
                                 said(3, "Wistin: done.\nNothing for Wren to try: it is a lore note.")), []) is None,
               "the escape line, with a reason, lets it through")
-        check(decide(transcript(user, said(1, "Wistin: lore."), write(2),
+        check(decide(transcript(user, said(1, "Wistin: lore."), write(2), mark(2),
                                 said(3, 'the hook wants "nothing for Wren to try" said')), []) is not None,
               "PLANTED: mentioning the escape mid-line is not using it")
-        quoted = (decide(transcript(user, said(1, "Wistin: x"), write(2)), []) or {}).get("reason", "")
-        check(decide(transcript(user, said(1, "Wistin: x"), write(2), said(3, quoted)), []) is not None,
+        quoted = (decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2)), []) or {}).get("reason", "")
+        check(bool(quoted) and decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, quoted)), []) is not None,
               "PLANTED: quoting the refusal back (its '<why>' placeholder) is not the escape")
-        out = decide(transcript(user, publish(1)), [])
-        check(bool(out) and "an Artifact publish" in out["reason"],
-              "PLANTED: a real Artifact publish (no label) owes Wren")
+        check(decide(transcript(user, publish(1)), []) is None and logged()[-1]["old_rule"] is True,
+              "an Artifact publish no longer owes Wren (RULED 2026-11-19); still logged")
         check(decide(transcript(user, tool(1, "Artifact", {"action": "publish", "asset": True, "url": "u",
                                                            "file_path": "a.png"})), []) is None,
               "an asset upload is not a publish")
         check(decide(transcript(user, tool(1, "mcp__a2e5608f-73d1-4432-84e6-22b3701e89d8__generate_diagram", {})), []) is None,
               "a Figma generate_diagram is Wince's (a look), not Wren's (nothing runnable)")
         old = {"type": "user", "timestamp": "2026-11-17T14:00:00.000Z", "message": {"content": "earlier"}}
-        check(decide(transcript(old, said(1, "Wistin: x"), write(2), user), []) is None,
+        check(decide(transcript(old, said(1, "Wistin: x"), write(2), mark(2), user), []) is None,
               "a make from an EARLIER turn is not this turn's debt")
-        p = transcript(user, said(1, "Wistin: x"), write(2), said(3, "Wistin: y"))
+        p = transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y"))
         check(decide(dict(p, stop_hook_active=True), []) is None and logged()[-1]["action"] == "released",
               "already refused once this turn: it allows, and logs 'released'")
         log = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "a1", "utc": "2026-11-17T15:00:09Z"}]
-        check(decide(transcript(user, said(1, "Wistin: x"), write(2), said(3, "Wistin: y")), log) is None,
+        check(decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y")), log) is None,
               "a Wren that finished in the background (w_ran log) after the write satisfies it")
-        check(decide(transcript(user, said(1, "Wistin: x"), write(2), said(3, "Wistin: y")),
+        check(decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y")),
                      [dict(log[0], session_id="s2")]) is not None,
               "another session's Wren run is not this session's")
 
@@ -251,7 +267,7 @@ def self_test() -> int:
         def set_mode(raw):
             with open(os.environ["SKYNE_W_FOLLOW_MODE"], "wb") as f:
                 f.write(raw)
-        trig = transcript(user, said(1, "Wistin: x"), write(2), said(3, "Wistin: y"))
+        trig = transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y"))
         for label, raw in (("plain", b"log"), ("utf-8 BOM", b"\xef\xbb\xbflog\r\n"),
                            ("utf-16", "log\r\n".encode("utf-16"))):
             set_mode(raw)

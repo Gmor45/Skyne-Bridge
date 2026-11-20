@@ -193,6 +193,10 @@ skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
   tried what was made, the lazy way. "nothing for Wren to try:" plus a reason
   lets lore and notes through. Builds done in the main loop, not by a W, are
   not seen.
+- **Narrowed 2026-11-19: Wren and Wince fire on the Checked stage only.** A turn that marks a
+  Plan board feature Checked (an ArtifactData write) owes a Wren try and then one Wince pass;
+  a W label or a publish no longer owes anything (92 of 107 forced runs came from those).
+  Wince after a real W agent run and the grade-filing check are unchanged.
 - **Research is graded too** (RULED 2026-10-17) -- `wince_gate.py` counts a
   `research` or `deep-research` skill run as a W, so Wince must follow it.
   Research questions route to the `research` skill, not to Wander: Wander

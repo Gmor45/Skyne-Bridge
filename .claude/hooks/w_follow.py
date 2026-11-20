@@ -20,8 +20,8 @@ holds what both gates share, so there is one reading of each rule:
 
 NAMED BLIND SPOTS (told to Garrett in the pre-C message)
 --------------------------------------------------------
-* Work under a "Claude:" label is invisible to the label trigger (the SessionStart
-  share line watches for it). * Files written by subagents or by scripts are not
+* Since 2026-11-19 the trigger is a Plan board feature marked Checked, not a
+  label or a publish. Garrett tapping Checked on the board himself is not seen. * Files written by subagents or by scripts are not
   seen as writes. * Cloud: see cloud_enforces(). * A grade filed by a command that
   never reached a queue or a register is not seen, on purpose.
 
@@ -43,6 +43,48 @@ LABELS = tuple(w.capitalize() for w in FOLLOWED)        # Wistin ... Wince
 LABEL_RX = re.compile(r"^\s*(%s):\s" % "|".join(LABELS))
 MAKER_LABELS = ("Wistin", "Wick", "Ward", "Warden", "Whittle")
 WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+# RULED 2026-11-19 (Skyne DECISIONS): the automatic Wince/Wren runs fire when a turn
+# marks a Plan board feature's Checked stage done, and no longer on a W label or a
+# publish. The board's stage order lives in skyne data/plan-board/board.json; `s`
+# is positional, so the Checked index is read from the row's LENGTH: seven stages
+# (asked, decided, designed, CHECKED, built, live, used) since 2026-11-19, five
+# (decided, designed, CHECKED, built, live) before it.
+CHECKED_AT = {7: 3, 5: 2}
+BOARD_TOOL_SUFFIX = "ArtifactData"
+
+
+def checked_marks(name, inp) -> list:
+    """Feature ids this tool call marks Checked. A write counts when the row's
+    `s` has Checked done and neither build stage after it (built, live) done --
+    the frontier, so re-sending a row while marking Built later does not fire
+    again -- or when it sets stageDates.checked without sending `s`."""
+    if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
+        return []
+    act = inp.get("action")
+    if act in ("set", "update"):
+        writes = [{"collection": inp.get("collection"), "doc_id": inp.get("doc_id"), "data": inp.get("data")}]
+    elif act == "batch":
+        writes = [w for w in inp.get("writes") or [] if isinstance(w, dict) and w.get("op") in ("set", "update")]
+    else:
+        return []
+    out = []
+    for w in writes:
+        col, data = str(w.get("collection") or ""), w.get("data")
+        if col.split("/")[-1] != "features" or not isinstance(data, dict):
+            continue
+        st = data.get("s")
+        hit = False
+        if isinstance(st, list) and len(st) in CHECKED_AT:
+            i = CHECKED_AT[len(st)]
+            hit = st[i] == "done" and all(x != "done" for x in st[i + 1:i + 3])
+        sd = data.get("stageDates")
+        if isinstance(sd, dict) and sd.get("checked") and not isinstance(st, list):
+            hit = True
+        if hit:
+            out.append(str(w.get("doc_id") or "?"))
+    return out
+
+
 LENS4_RX = re.compile(r"\[red-team lens 4:\s*([^\]\s][^\]]*?)\s*\]")
 
 # R12: attended cloud chats are meant to enforce like this PC, scheduled runs to
@@ -243,7 +285,7 @@ def _ts(s) -> str:
 
 def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> dict:
     """What the main loop did since Garrett's last message."""
-    texts, writes, pubs, unknown, lens4 = [], [], [], [], {}
+    texts, writes, pubs, unknown, lens4, checked = [], [], [], [], {}, []
     results = {}
     for e in entries[boundary + 1:]:
         if e.get("isSidechain"):
@@ -260,6 +302,7 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
                     name, inp = b.get("name"), b.get("input") or {}
                     if name in WRITE_TOOLS:
                         writes.append(ts)
+                    checked += [(ts, fid) for fid in checked_marks(name, inp)]
                     kind = classify_tool(name, inp, cfg)
                     if kind == "publish":
                         pubs.append((ts, name))
@@ -280,7 +323,7 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
     last = texts[-1][1] if texts else ""
     labels = {m.group(1) for t in (first, last) if (m := LABEL_RX.match(t))}
     return {"first_text": first, "last_text": last, "labels": labels,
-            "writes": writes, "publishes": pubs, "unknown_figma": unknown,
+            "writes": writes, "publishes": pubs, "unknown_figma": unknown, "checked": checked,
             "lens4_by_call": lens4, "lens4_by_agent": agent_loop}
 
 
@@ -392,7 +435,7 @@ def queue_lines(hours: int = 24) -> list[str]:
     return out
 
 
-BASELINE_LABEL_SHARE = 0.03          # DECISIONS R9: ~3% of replies carry a W label
+BASELINE_LABEL_SHARE = 0.03          # DECISIONS R9: ~3% of replies carry a W label (unused since 2026-11-19; kept for old readers)
 FORCED_PASSES_ALERT = 12             # R16/R19: forced passes a day that re-open the call
 
 
@@ -417,17 +460,10 @@ def heartbeat_lines(today: str | None = None) -> list[str]:
     forced = sum(1 for r in rows if r.get("action") == "refused"
                  and et_day(str(r.get("utc"))) == yday)
     if forced > FORCED_PASSES_ALERT:
-        out.append(f"{forced} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day: "
-                   f"R13/R19 say re-ask Garrett whether to keep the triggers wide.")
-    week_ago = (now - _dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    turns = [r for r in rows if r.get("gate") == "wince" and str(r.get("utc")) >= week_ago
-             and "labeled" in r]
-    if len(turns) >= 50:
-        share = sum(1 for r in turns if r["labeled"]) / len(turns)
-        if share < BASELINE_LABEL_SHARE / 2:
-            out.append(f"Only {share * 100:.1f}% of replies carried a W label over the last 7 days "
-                       f"(baseline ~{BASELINE_LABEL_SHARE * 100:.0f}%): the label trigger may be "
-                       f"going quiet, or work is moving under 'Claude:'.")
+        out.append(f"{forced} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day, "
+                   f"with the triggers already narrowed to the Checked stage (RULED 2026-11-19): "
+                   f"tell Garrett and ask whether Checked-only is still worth its cost.")
+    # The label-share watch was cut 2026-11-19: it guarded the label trigger, which is retired.
     return out
 
 
