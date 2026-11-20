@@ -75,14 +75,15 @@ CHECKED ONLY (RULED 2026-11-19, Skyne DECISIONS; ends the wide trial below early
 -------------------------------------------------------------------------------
 The label and publish triggers below are RETIRED. What owes the follow-up now is
 a turn that marks a Plan board feature's Checked stage done (an ArtifactData
-write, see w_follow.checked_marks). Checked is defined on the board as "Passed
+write that CHANGES Checked to done, see w_follow.CheckedWatch). Checked is defined on the board as "Passed
 Wince and Wren", so Wren runs first and ONE Wince pass after him. Measured
-before the change: 92 of 107 forced follow-ups since go-live came from labels
+before the change: 99 of 119 forced follow-ups since go-live came from labels
 or publishes. The agent-W trigger and the filed-check are unchanged. Labels and
 publishes are still LOGGED (`old_rule`) so the cost tracker can show what the
 retired rule would have fired on. Not seen: Garrett tapping Checked on the
-board himself (his call, not a Claude claim), and a mark written by a subagent
-or a script.
+board himself (his call, not a Claude claim), a mark written by a subagent
+or a script, and Claude never marking Checked at all (the trigger is Claude's
+own hand: it measures honesty, it cannot force it).
 
 STAGE 2 (RULED 2026-11-16, R5 R9 R10 R12 R19; plan Piece C; label/publish retired 2026-11-19)
 -----------------------------------------------------------
@@ -850,8 +851,23 @@ def self_test() -> int:
               "PLANTED: marking a board feature Checked with no Wince run is refused")
         check(flog()[-1]["action"] == "refused" and flog()[-1]["triggers"] == ["checked"],
               "the refusal is logged with its trigger")
-        check(go(u2, mk(2, ["done"] * 5 + ["no"] * 2), says(3, "Marked Live.")) is None,
-              "re-sending a row while marking Built/Live (Checked already behind it) does not fire again")
+        check(go(u2, mk(2), mk(3, ["done"] * 5 + ["no"] * 2), says(4, "Marked Built.")) is not None
+              and go(u2, says(1, "x"), mk(2), says(3, "y"), {"type": "user", "timestamp": t % 4, "message": {"content": "next"}}, mk(5, ["done"] * 5 + ["no"] * 2), says(6, "Built.")) is None,
+              "re-sending a row whose Checked was already done (written earlier in the session) does not fire again")
+        rd = os.path.join(_scratch, "rd")
+        os.makedirs(os.path.join(rd, "features"), exist_ok=True)
+        with open(os.path.join(rd, "features", "BL-1.json"), "w", encoding="utf-8") as fh:
+            json.dump({"s": ["part", "done", "done", "no", "done", "no", "no"]}, fh)
+        os.utime(os.path.join(rd, "features", "BL-1.json"), (0, 0))
+        readf = tu(1, "ArtifactData", {"action": "list", "url": "u", "collection": "features", "out_dir": rd}, "rl")
+        out = go(u2, readf, mk(2, ["part", "done", "done", "done", "done", "no", "no"]), says(3, "Checked it."))
+        check(bool(out) and "BL-1" in out["reason"],
+              "PLANTED: Checked marked AFTER Built (read showed it not done) fires (Wince: CO-1, CO-4..7)")
+        with open(os.path.join(rd, "features", "BL-1.json"), "w", encoding="utf-8") as fh:
+            json.dump({"s": ["no", "done", "done", "done", "no", "no", "no"]}, fh)
+        os.utime(os.path.join(rd, "features", "BL-1.json"), (0, 0))
+        check(go(u2, readf, mk(2, ["done", "done", "done", "done", "no", "no", "no"]), says(3, "Asked done.")) is None,
+              "marking Asked on a row the read already showed Checked does not fire (Wince: BL-N2, BL-6)")
         out = go(u2, mk(2, ["done", "done", "done", "no", "no"]), says(3, "Old board."))
         check(bool(out), "PLANTED: a five-stage row (before 2026-11-19) marked Checked still fires")
         out = go(u2, tu(2, "ArtifactData", {"action": "batch", "url": "u", "writes": [

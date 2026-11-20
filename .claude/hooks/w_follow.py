@@ -53,36 +53,94 @@ CHECKED_AT = {7: 3, 5: 2}
 BOARD_TOOL_SUFFIX = "ArtifactData"
 
 
-def checked_marks(name, inp) -> list:
-    """Feature ids this tool call marks Checked. A write counts when the row's
-    `s` has Checked done and neither build stage after it (built, live) done --
-    the frontier, so re-sending a row while marking Built later does not fire
-    again -- or when it sets stageDates.checked without sending `s`."""
-    if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
-        return []
+def _checked_done(st) -> bool | None:
+    """Checked done in a stage list? None when the list is not a board row."""
+    if isinstance(st, list) and len(st) in CHECKED_AT:
+        return st[CHECKED_AT[len(st)]] == "done"
+    return None
+
+
+def _board_writes(inp: dict) -> list[dict]:
     act = inp.get("action")
     if act in ("set", "update"):
-        writes = [{"collection": inp.get("collection"), "doc_id": inp.get("doc_id"), "data": inp.get("data")}]
-    elif act == "batch":
-        writes = [w for w in inp.get("writes") or [] if isinstance(w, dict) and w.get("op") in ("set", "update")]
-    else:
-        return []
-    out = []
-    for w in writes:
-        col, data = str(w.get("collection") or ""), w.get("data")
-        if col.split("/")[-1] != "features" or not isinstance(data, dict):
-            continue
-        st = data.get("s")
-        hit = False
-        if isinstance(st, list) and len(st) in CHECKED_AT:
-            i = CHECKED_AT[len(st)]
-            hit = st[i] == "done" and all(x != "done" for x in st[i + 1:i + 3])
-        sd = data.get("stageDates")
-        if isinstance(sd, dict) and sd.get("checked") and not isinstance(st, list):
-            hit = True
-        if hit:
-            out.append(str(w.get("doc_id") or "?"))
-    return out
+        return [{"collection": inp.get("collection"), "doc_id": inp.get("doc_id"), "data": inp.get("data")}]
+    if act == "batch":
+        return [w for w in inp.get("writes") or [] if isinstance(w, dict) and w.get("op") in ("set", "update")]
+    return []
+
+
+def _is_features(col) -> bool:
+    return str(col or "").split("/")[-1] == "features"
+
+
+def _epoch(ts: str) -> float:
+    try:
+        return _dt.datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
+class CheckedWatch:
+    """Remembers, across the whole session, each feature's Checked state as Claude
+    last READ it (an ArtifactData read saved with out_dir: the file on disk, if it
+    was written before the write being judged) or last WROTE it. A write fires
+    when it turns Checked to done and the remembered state was not done, or is
+    unknown (no read on record: a review is owed rather than skipped).
+    Wince 2026-11-19: the first version's "frontier" rule missed rows with Built
+    already done (CO-1, CO-4..7) and re-fired on rows re-sent at the frontier."""
+
+    def __init__(self):
+        self.known = {}          # doc_id -> bool (Checked done)
+        self.read_dirs = []      # out_dir of each features read, in order
+
+    def note_call(self, name, inp) -> None:
+        if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
+            return
+        if inp.get("action") in ("get", "list", "query") and _is_features(inp.get("collection")) and inp.get("out_dir"):
+            self.read_dirs.append(str(inp["out_dir"]))
+
+    def _read_state(self, fid: str, ts: str):
+        when = _epoch(ts)
+        for d in reversed(self.read_dirs):
+            fp = os.path.join(d, "features", fid + ".json")
+            try:
+                if when and os.path.getmtime(fp) > when + 1:
+                    continue                      # re-read AFTER this write: not the before-state
+                with open(fp, encoding="utf-8") as fh:
+                    return _checked_done((json.load(fh) or {}).get("s"))
+            except (OSError, ValueError):
+                continue
+        return None
+
+    def marks(self, name, inp, ts: str = "") -> list:
+        """Feature ids this call turns Checked to done. Also updates memory."""
+        if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
+            return []
+        self.note_call(name, inp)
+        out = []
+        for w in _board_writes(inp):
+            data = w.get("data")
+            if not _is_features(w.get("collection")) or not isinstance(data, dict):
+                continue
+            fid = str(w.get("doc_id") or "?")
+            now = _checked_done(data.get("s"))
+            sd = data.get("stageDates")
+            if now is None and isinstance(sd, dict) and sd.get("checked"):
+                now = True
+            if now is None:
+                continue
+            before = self.known.get(fid)
+            if before is None:
+                before = self._read_state(fid, ts)
+            if now and before is not True:
+                out.append(fid)
+            self.known[fid] = now
+        return out
+
+
+def checked_marks(name, inp, watch: "CheckedWatch | None" = None, ts: str = "") -> list:
+    """Feature ids this one call turns Checked to done (a fresh watch: nothing known)."""
+    return (watch or CheckedWatch()).marks(name, inp, ts)
 
 
 LENS4_RX = re.compile(r"\[red-team lens 4:\s*([^\]\s][^\]]*?)\s*\]")
@@ -287,6 +345,13 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
     """What the main loop did since Garrett's last message."""
     texts, writes, pubs, unknown, lens4, checked = [], [], [], [], {}, []
     results = {}
+    watch = CheckedWatch()
+    for e in entries[:boundary + 1]:          # earlier turns: what Claude read or wrote on the board
+        if e.get("isSidechain") or e.get("type") != "assistant":
+            continue
+        for b in (e.get("message") or {}).get("content") or []:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                watch.marks(b.get("name"), b.get("input") or {}, _ts(e.get("timestamp")))
     for e in entries[boundary + 1:]:
         if e.get("isSidechain"):
             continue
@@ -302,7 +367,7 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
                     name, inp = b.get("name"), b.get("input") or {}
                     if name in WRITE_TOOLS:
                         writes.append(ts)
-                    checked += [(ts, fid) for fid in checked_marks(name, inp)]
+                    checked += [(ts, fid) for fid in watch.marks(name, inp, ts)]
                     kind = classify_tool(name, inp, cfg)
                     if kind == "publish":
                         pubs.append((ts, name))

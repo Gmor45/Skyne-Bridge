@@ -195,8 +195,12 @@ skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
   not seen.
 - **Narrowed 2026-11-19: Wren and Wince fire on the Checked stage only.** A turn that marks a
   Plan board feature Checked (an ArtifactData write) owes a Wren try and then one Wince pass;
-  a W label or a publish no longer owes anything (92 of 107 forced runs came from those).
-  Wince after a real W agent run and the grade-filing check are unchanged.
+  a W label or a publish no longer owes anything (99 of 119 forced runs since go-live came
+  from those). It fires when Checked CHANGES to done, judged against the row as Claude last
+  read (an out_dir read) or wrote it; a row with no read on record counts as a change.
+  Not seen: Garrett tapping Checked himself, and Claude simply never marking Checked (the
+  trigger is Claude's own hand). Wince after a real W agent run and the grade-filing check
+  are unchanged.
 - **Research is graded too** (RULED 2026-10-17) -- `wince_gate.py` counts a
   `research` or `deep-research` skill run as a W, so Wince must follow it.
   Research questions route to the `research` skill, not to Wander: Wander
