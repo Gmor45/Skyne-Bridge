@@ -66,7 +66,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wince_gate import (  # noqa: E402  -- one boundary rule, one way to read a run
-    IMPORT_ERROR, _raw_error_row, agent_runs, hook_output, last_user_boundary, read_jsonl)
+    CRITIC, IMPORT_ERROR, _raw_error_row, agent_runs, hook_output, last_user_boundary, read_jsonl,
+    review_floor)
 try:
     from w_ran import log_path  # noqa: E402  -- one log path
     import w_follow  # noqa: E402
@@ -128,16 +129,23 @@ def decide(payload: dict, log_rows: list[dict] | None = None, log_it: bool = Tru
     facts = w_follow.turn_facts(entries, b)
     all_facts = w_follow.turn_facts(entries, -1)
     owed = wren_owed(facts, entries, b)
-    satisfied = False
+    satisfied = wince_too = False
     if owed:
-        work = w_follow.last_work_ts(facts)
-        satisfied = any(r["finish"] >= max(work, since_s)
+        floor, recent = review_floor(entries, b)       # a try in the turn before counts
+        work = max(w_follow.last_work_ts(recent), floor)
+        satisfied = any(r["finish"] >= work
                         for r in agent_runs(entries, rows, session, USER, all_facts))
+        # wince_gate refuses this same mark with BOTH steps (Wren, then one Wince)
+        # unless a Wince already covers it: then one message is enough.
+        wince_too = not any(r["finish"] >= work
+                            for r in agent_runs(entries, rows, session, CRITIC, all_facts))
     out, action = None, "quiet"
     if owed and not satisfied:
         if mode == "enforce" and w_follow.cloud_enforces():
-            reason = refusal(facts) + (f" ALSO: {mode_note}" if mode_note else "")
-            out, action = {"decision": "block", "reason": reason}, "refused"
+            if wince_too:
+                action = "left-to-wince"
+            else:
+                out, action = {"decision": "block", "reason": refusal(facts)}, "refused"
         else:
             action = "log-would-refuse"
     elif owed:
@@ -232,7 +240,8 @@ def self_test() -> int:
         check(decide(transcript(user, said(1, "Wistin: here is the script."), write(2), said(3, "Wistin: done.")), []) is None
               and logged()[-1]["old_rule"] is True,
               "a Wistin: turn that wrote a file no longer owes Wren (RULED 2026-11-19); the log says the old rule would have")
-        out = decide(transcript(user, said(1, "Here is the script."), write(2), mark(3), said(4, "Marked Checked.")), [])
+        WL = [{"event": "stop", "w": "wince", "session_id": "s1", "agent_id": "aw", "utc": "2026-11-17T15:00:08Z"}]      # a Wince that already covers the work
+        out = decide(transcript(user, said(1, "Here is the script."), write(2), mark(3), said(4, "Marked Checked.")), WL)
         check(bool(out) and out["decision"] == "block" and "Wren tries what is made" in out["reason"]
               and "BL-1" in out["reason"],
               "PLANTED: marking a board feature Checked with no Wren run owes Wren")
@@ -241,8 +250,16 @@ def self_test() -> int:
         check(decide(transcript(user, said(1, "Wistin: here."), write(2), mark(2), *wren_done(3), said(6, "Wistin: done.")), []) is None
               and logged()[-1]["action"] == "satisfied",
               "a Wren run that finished after the write satisfies it")
-        check(decide(transcript(user, said(1, "Wistin: here."), *wren_done(2), write(5), mark(5), said(6, "Wistin: done.")), [])
+        check(decide(transcript(user, said(1, "Wistin: here."), *wren_done(2), write(5), mark(5), said(6, "Wistin: done.")), WL)
               is not None, "PLANTED: a Wren run BEFORE the last write does not count")
+        check(decide(transcript(user, said(1, "Here."), write(2), mark(3), said(4, "Marked.")), []) is None
+              and logged()[-1]["action"] == "left-to-wince",
+              "PLANTED: with no Wince either, Wren stays quiet: wince_gate's one refusal names both steps")
+        prev = {"type": "user", "timestamp": "2026-11-17T14:59:00.000Z", "message": {"content": "build"}}
+        tried = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "ar", "utc": "2026-11-17T14:59:30Z"}]
+        check(decide(transcript(prev, tool(0, "Write", {"file_path": "a", "content": "1"}) | {"timestamp": "2026-11-17T14:59:10.000Z"},
+                                user, mark(3), said(4, "Marked.")), WL + tried) is None,
+              "PLANTED: a Wren try in the turn before the Checked mark covers it")
         check(decide(transcript(user, said(1, "Weir: I would pick B."), said(2, "Weir: so B.")), []) is None,
               "a non-maker label (Weir) with no file is quiet")
         check(decide(transcript(user, said(1, "Weir: one more option."), write(2), said(3, "Weir: done.")), []) is None,
@@ -253,10 +270,10 @@ def self_test() -> int:
                                 said(3, "Wistin: done.\nNothing for Wren to try: it is a lore note.")), []) is None,
               "the escape line, with a reason, lets it through")
         check(decide(transcript(user, said(1, "Wistin: lore."), write(2), mark(2),
-                                said(3, 'the hook wants "nothing for Wren to try" said')), []) is not None,
+                                said(3, 'the hook wants "nothing for Wren to try" said')), WL) is not None,
               "PLANTED: mentioning the escape mid-line is not using it")
-        quoted = (decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2)), []) or {}).get("reason", "")
-        check(bool(quoted) and decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, quoted)), []) is not None,
+        quoted = (decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2)), WL) or {}).get("reason", "")
+        check(bool(quoted) and decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, quoted)), WL) is not None,
               "PLANTED: quoting the refusal back (its '<why>' placeholder) is not the escape")
         check(decide(transcript(user, publish(1)), []) is None and logged()[-1]["old_rule"] is True,
               "an Artifact publish no longer owes Wren (RULED 2026-11-19); still logged")
@@ -269,13 +286,13 @@ def self_test() -> int:
         check(decide(transcript(old, said(1, "Wistin: x"), write(2), mark(2), user), []) is None,
               "a make from an EARLIER turn is not this turn's debt")
         p = transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y"))
-        check(decide(dict(p, stop_hook_active=True), []) is None and logged()[-1]["action"] == "released",
+        check(decide(dict(p, stop_hook_active=True), WL) is None and logged()[-1]["action"] == "released",
               "already refused once this turn: it allows, and logs 'released'")
         log = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "a1", "utc": "2026-11-17T15:00:09Z"}]
         check(decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y")), log) is None,
               "a Wren that finished in the background (w_ran log) after the write satisfies it")
         check(decide(transcript(user, said(1, "Wistin: x"), write(2), mark(2), said(3, "Wistin: y")),
-                     [dict(log[0], session_id="s2")]) is not None,
+                     [dict(log[0], session_id="s2")] + WL) is not None,
               "another session's Wren run is not this session's")
 
         # the switch
@@ -289,9 +306,9 @@ def self_test() -> int:
             check(decide(trig, []) is None and logged()[-1]["action"] == "log-would-refuse",
                   f"switch written as {label}: logs, refuses nothing")
         set_mode(b"banana")
-        out = decide(trig, [])
-        check(bool(out) and "not 'enforce' or 'log'" in out["reason"],
-              "a garbage switch value enforces AND the refusal says so")
+        out = decide(trig, WL)
+        check(bool(out) and "w-follow-mode" not in out["reason"],
+              "a garbage switch value enforces; the refusal never names the switch file")
         os.unlink(os.environ["SKYNE_W_FOLLOW_MODE"])
 
         # cloud: logs, never refuses (PC-only until a cloud session confirms)
@@ -302,7 +319,10 @@ def self_test() -> int:
         os.environ.pop("CLAUDE_CODE_REMOTE", None)
 
         # end to end through stdin, as the harness runs it
-        env = dict(os.environ, SKYNE_W_RUNS_LOG=os.path.join(d, "none.jsonl"))
+        runs_log = os.path.join(d, "runs.jsonl")
+        with open(runs_log, "w", encoding="utf-8") as f:
+            f.write(json.dumps(WL[0]) + "\n")
+        env = dict(os.environ, SKYNE_W_RUNS_LOG=runs_log)
         r = subprocess.run([sys.executable, __file__], input=json.dumps(trig),
                            capture_output=True, text=True, env=env)
         printed = json.loads(r.stdout or "{}")

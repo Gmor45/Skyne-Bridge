@@ -102,8 +102,10 @@ Two NEW triggers join the agent-W one, and the filed-check is rebuilt:
   finish, in `~/.claude/skyne/wince-grades-queue.jsonl` (via `wince_grades.py
   queue`) or a register (via `add`/a flush); a red-team lens-4 run (the prompt
   carries `[red-team lens 4: <loop id>]`, joined to its agent id through the
-  Agent result's `toolUseResult.agentId`) only by a `redteam_rounds.py` row for
-  that loop. Typing the script's NAME no longer counts. One filing covers one
+  Agent result's `toolUseResult.agentId`) by a `redteam_rounds.py` row for that
+  loop or by its own grade row (the round can be filed only once all four
+  reviewers are in; W red team round 2). Each filing counts once wherever it is
+  seen. Typing the script's NAME no longer counts. One filing covers one
   finish. `no grade to file: <why>` still accounts for the finishes before it.
 * The switch `~/.claude/skyne/w-follow-mode` (w_follow.py): `log` makes the NEW
   triggers record "would have refused" and refuse nothing. The agent-W trigger,
@@ -166,7 +168,7 @@ def _raw_error_row(gate: str, exc: BaseException) -> None:
         pass
 
 
-LEAD = ("Claude owes a Wince/Wren follow-up before this reply goes out. Nothing for you "
+LEAD = ("Claude owes a Wince/Wren follow-up before it finishes. Nothing for you "
         "to do, Garrett: this is Claude's checklist.")
 
 
@@ -197,6 +199,14 @@ def read_jsonl(path: str) -> list[dict]:
     except OSError:
         return []
     return out
+
+
+def review_floor(entries: list[dict], b: int) -> tuple[str, dict]:
+    """(start of the turn BEFORE this one, the facts from then to now). A Wince or
+    Wren run since then can cover a Checked mark made this turn (W red team round 2)."""
+    prev = last_user_boundary(entries[:b]) if b > 0 else -1
+    at = prev if prev >= 0 else b
+    return str(entries[at].get("timestamp") or "")[:19], w_follow.turn_facts(entries, at)
 
 
 def last_user_boundary(entries: list[dict]) -> int:
@@ -556,23 +566,13 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
     elif session:
         owed = owed_filings(entries, rows, session, all_facts, str(payload.get("cwd") or ""))
         if owed:
-            tagged = [o for o in owed if o.get("loop")]
-            plain = [o for o in owed if not o.get("loop")]
-            bits = []
-            if plain:
-                bits.append(f"{len(plain)} Wince grade(s)")
-            if tagged:
-                bits.append(f"{len(tagged)} red-team lens-4 run(s) (loop "
-                            f"{', '.join(sorted({o['loop'] for o in tagged}))})")
             ev["always"].append(
-                f"{' and '.join(bits)} finished in this session with no filing from THIS session "
-                f"after it. File each one: `python3 scripts/wince_grades.py queue ...` (one command "
-                f"per finish; /handoff flushes the queue into a PR)"
-                + (", and for a red-team lens-4 run `python3 scripts/redteam_rounds.py queue ...` "
-                   "for its loop (a grade row does not count for it)" if tagged else "")
-                + ". Naming the script in a command does not count: the row has to reach the "
-                  "queue (or a register in a skyne checkout this session ran the writer in). "
-                  "If a Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
+                f"{len(owed)} Wince grade(s) finished in this session with no filing from THIS "
+                f"session after it. File each one: `python3 scripts/wince_grades.py queue ...` (one "
+                f"command per finish; for the critic run in a red-team review, its grade row "
+                f"counts). Naming the script in a command does not count: the row has to reach the "
+                f"queue (or a register in a skyne checkout this session ran the writer in). "
+                f"If a Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
             ev["triggers"].append("unfiled")
 
     # --- the agent-W trigger (as before) ----------------------------------------
@@ -601,13 +601,16 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
     if why:
         import wren_gate
         wren_owed = wren_gate.wren_owed(facts, entries, b)
+        # A review in the turn BEFORE the mark counts (review, Garrett says yes, Claude
+        # marks Checked next turn); the work must not have changed since it.
+        floor, recent = review_floor(entries, b)
         wren_runs = agent_runs(entries, rows, session, "wren", all_facts)
-        wren_done = [r["finish"] for r in wren_runs if r["finish"] >= since_s]
+        wren_done = [r["finish"] for r in wren_runs if r["finish"] >= floor]
         wren_last = wren_done[-1] if wren_done else ""
-        need = max(w_follow.last_work_ts(facts), wren_last)
+        need = max(w_follow.last_work_ts(recent), wren_last, floor)
         mine = [r["finish"] for r in agent_runs(entries, rows, session, CRITIC, all_facts)
-                if r["finish"] >= since_s]
-        satisfied = any(f >= max(need, since_s) for f in mine)
+                if r["finish"] >= floor]
+        satisfied = any(f >= need for f in mine)
         ev["wren_owed"] = wren_owed
         ev["satisfied"] = satisfied
         if not satisfied:
@@ -643,7 +646,7 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
     if reasons:
         # One refusal a turn is all a Stop hook gets (stop_hook_active lets the
         # next one through), so every debt goes in it or the next is dropped.
-        extra = [x for x in (ev["mode_note"], ev.get("note_figma")) if x]
+        extra = [x for x in (ev.get("note_figma"),) if x]   # the mode note is a start-up line
         out = {"decision": "block", "reason": " ALSO: ".join(reasons + extra)}
         action = "refused"
     elif ev["required"]:
@@ -1076,8 +1079,9 @@ def self_test() -> int:
                  agent(2, "wince", "l4", "[red-team lens 4: L7] grade this deck"), async_back(3, "l4", "agentLens4")]
         log4 = [stop_row("wince", "agentLens4", "2026-11-17T15:00:25Z", "s2")]
         out = go(*lens4, says(16, "Weir: done."), log=log4, session_id="s2")
-        check(bool(out) and "lens-4" in out["reason"] and "L7" in out["reason"],
-              "PLANTED: a tagged lens-4 Wince run whose rounds row is dated BEFORE the finish is refused")
+        check(bool(out) and "1 Wince grade" in out["reason"] and "lens-4" not in out["reason"],
+              "PLANTED: a tagged lens-4 Wince run whose rounds row is dated BEFORE the finish is refused, "
+              "in plain words")
         queue_row(os.environ["SKYNE_ROUNDS_QUEUE"], session="s2", loop="L7", queued_utc="2026-11-17T15:00:30Z")
         check(go(*lens4, says(31, "Weir: done."), log=log4, session_id="s2") is None,
               "lens 4 + a redteam_rounds row for its loop, after the run, passes with no refusal")
@@ -1086,8 +1090,9 @@ def self_test() -> int:
                     agent(2, "wince", "l5", "[red-team lens 4: L8] grade"), async_back(3, "l5", "agentLens5")]
         out = go(*lens4_s3, says(41, "Weir: done."), log=[stop_row("wince", "agentLens5", "2026-11-17T15:00:15Z", "s3")],
                  session_id="s3")
-        check(bool(out) and "lens-4" in out["reason"],
-              "PLANTED: a tagged lens-4 run followed only by wince_grades queue/add is refused")
+        check(out is None,
+              "a tagged lens-4 run followed by its wince_grades row passes: the round itself is filed "
+              "once all four reviewers are in (W red team round 2)")
 
         # the filed-check by CONTENT
         qa = tmp_q = os.path.join(_scratch, "gq.jsonl")
@@ -1159,6 +1164,27 @@ def self_test() -> int:
                 stop_row("wince", "aW", "2026-11-17T15:00:04Z")]
         check(go(*mark_then_continue, log=cont) is None,
               "a continued Wince that re-finishes AFTER the Checked mark satisfies it (session ee79be7b)")
+        # W red team round 2: reviewed in the turn before, marked Checked after Garrett's yes
+        tp = "2026-11-17T16:00:%02d.000Z"
+        ua = {"type": "user", "timestamp": tp % 0, "message": {"content": "build it"}}
+        ub = {"type": "user", "timestamp": tp % 10, "message": {"content": "yes, mark it Checked"}}
+        wr_a = dict(wr(1), timestamp=tp % 1)
+        mk_b = dict(mk(11, when="2026-11-17T16:00:11Z"), timestamp=tp % 11)
+        rev = [stop_row("wren", "aR2", "2026-11-17T16:00:03Z"), stop_row("wince", "aW2", "2026-11-17T16:00:05Z")]
+        queue_row(qa, session="s1", queued_utc="2026-11-17T16:00:06Z")
+        check(go(ua, wr_a, dict(says(7, "Reviewed."), timestamp=tp % 7), ub, mk_b,
+                 dict(says(12, "Marked."), timestamp=tp % 12), log=rev) is None,
+              "PLANTED: a Wince+Wren review in the turn BEFORE the Checked mark covers it (no second pass)")
+        wr_late = dict(wr(8), timestamp=tp % 8)
+        out = go(ua, wr_a, dict(says(7, "Reviewed."), timestamp=tp % 7), wr_late, ub, mk_b,
+                 dict(says(12, "Marked."), timestamp=tp % 12), log=rev)
+        check(bool(out) and "BL-1" in out["reason"],
+              "PLANTED: work changed AFTER that review is not covered by it")
+        uc = {"type": "user", "timestamp": "2026-11-17T15:59:00.000Z", "message": {"content": "earlier"}}
+        out = go(uc, dict(says(1, "x"), timestamp="2026-11-17T15:59:01.000Z"), ua, wr_a,
+                 dict(says(7, "x"), timestamp=tp % 7), ub, mk_b, dict(says(12, "Marked."), timestamp=tp % 12),
+                 log=[stop_row("wince", "aW3", "2026-11-17T15:59:02Z")])
+        check(bool(out), "PLANTED: a review two turns back does not cover a mark")
 
         # the switch: log mode logs the NEW triggers, the old blocks keep blocking (R10)
         def set_mode(raw):
@@ -1174,8 +1200,11 @@ def self_test() -> int:
               "log mode does not release the agent-W trigger (it blocks today, R10)")
         set_mode(b"banana")
         out = go(*trig)
-        check(bool(out) and "not 'enforce' or 'log'" in out["reason"],
-              "PLANTED: a garbage switch value enforces plus a visible line")
+        check(bool(out) and "not 'enforce' or 'log'" not in out["reason"]
+              and "w-follow-mode" not in out["reason"]
+              and "not 'enforce' or 'log'" in w_follow.read_mode()[1],
+              "PLANTED: a garbage switch value enforces; the refusal never names the switch file, the "
+              "start-up readout does")
         os.unlink(os.environ["SKYNE_W_FOLLOW_MODE"])
 
         # cloud: new triggers log only
