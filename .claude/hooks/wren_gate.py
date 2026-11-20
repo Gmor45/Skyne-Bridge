@@ -108,7 +108,7 @@ def refusal(facts: dict) -> str:
     marked = sorted({fid for _, fid in facts["checked"]})
     what = [f"a Plan board feature marked Checked ({', '.join(marked)})"]
     return (f"Wren tries what is made before it counts as Checked: this turn has "
-            f"{' and '.join(what)}, and no `wren` agent run has finished since. Before replying, "
+            f"{' and '.join(what)}, and no `wren` agent run has finished since. Before Claude finishes, "
             f"run the `wren` agent on what was made: use it the way "
             f"Garrett would on a lazy day -- no docs, the obvious button -- and report where it "
             f"got stuck (render_page.py gives him a look at a page). Wren reports; he never "
@@ -151,7 +151,10 @@ def decide(payload: dict, log_rows: list[dict] | None = None, log_it: bool = Tru
     elif owed:
         action = "satisfied"
     if payload.get("stop_hook_active"):
-        if out:
+        # A Wren still owed on the second try goes out with the reply. Log it as
+        # released even when wince_gate's refusal carried it (left-to-wince), or the
+        # follow-through count never sees the Wren debt (W red team round 3).
+        if out or action == "left-to-wince":
             action = "released"
         out = None
     if log_it:
@@ -255,6 +258,22 @@ def self_test() -> int:
         check(decide(transcript(user, said(1, "Here."), write(2), mark(3), said(4, "Marked.")), []) is None
               and logged()[-1]["action"] == "left-to-wince",
               "PLANTED: with no Wince either, Wren stays quiet: wince_gate's one refusal names both steps")
+        check(decide(dict(transcript(user, said(1, "Here."), write(2), mark(3), said(4, "Marked.")),
+                          stop_hook_active=True), []) is None
+              and logged()[-1]["action"] == "released",
+              "PLANTED: a Wren still owed when the reply goes out anyway is logged released, so the "
+              "follow-through count owes it (it used to read left-to-wince and vanish)")
+        check("before replying" not in refusal({"checked": [(0, "BL-1")]}).lower(),
+              "PLANTED: the refusal says 'before Claude finishes', not 'before replying' (round 3)")
+        # a background agent's finish (real shape, transcript 1fbee306) is not Garrett's turn: the
+        # Wren try before it, in his previous turn, still covers the mark after his "yes"
+        note = {"type": "user", "timestamp": t % 6, "promptSource": "system",
+                "origin": {"kind": "task-notification", "producer": "session-task"},
+                "message": {"role": "user", "content": "<task-notification>\n<status>completed</status>"}}
+        yes = {"type": "user", "timestamp": t % 7, "origin": {"kind": "human"}, "message": {"content": "yes"}}
+        check(decide(transcript(user, said(1, "Here."), write(2), *wren_done(3), note, yes, mark(8),
+                                said(9, "Marked.")), WL) is None,
+              "PLANTED: a task-notification between the Wren try and Garrett's yes does not move the floor")
         prev = {"type": "user", "timestamp": "2026-11-17T14:59:00.000Z", "message": {"content": "build"}}
         tried = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "ar", "utc": "2026-11-17T14:59:30Z"}]
         check(decide(transcript(prev, tool(0, "Write", {"file_path": "a", "content": "1"}) | {"timestamp": "2026-11-17T14:59:10.000Z"},
