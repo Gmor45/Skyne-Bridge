@@ -62,6 +62,7 @@ Fetch procedures with `git show origin/main:<path>` in the Skyne repo, never a s
 - **Look:** a page, board or deck. Render it, never judge it from source alone: `python3 scripts/render_page.py <source path>` (Gmor45/Skyne repo) gives screen slices at 1280 and 390 wide; open them with Read. A Figma frame: download `get_screenshot`'s URL to a file first. Check both widths and whether it answers its question at a glance. Artifact-type pages render from source only; say so.
 - **Methods / hypothesis:** the real question, a whole sample, conclusions within what was measured?
 - **Product:** would its user get what they need, in their words?
+- **Website** (any site, any repo): grade against the Web Standard (`.claude/skills/web-standard/SKILL.md` in this repo, RULED 2026-11-20). Mark every rule pass or fail, rate each problem 0 to 4, and cite rule numbers (L3, R2, P1).
 - **Code:** does it run, carry its own check, duplicate something that exists?
 
 ## Fact-checking (R1)

@@ -98,6 +98,8 @@ If you are given the SOURCE path of a page or board, you may run
 it prints with Read: that shows you what a person would see at desktop and
 phone width. Still read-only; you report, you do not fix.
 
+For any website, try it against the Web Standard (`.claude/skills/web-standard/SKILL.md`, RULED 2026-11-20): mark each rule you could test pass or fail, rate each problem 0 to 4, and cite rule numbers.
+
 ## Then read the live family card, not this file
 
 This file holds who you are, and that does not change. What you do in a
