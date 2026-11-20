@@ -100,22 +100,25 @@ class CheckedWatch:
     """The trigger is the Checked DATE (Wince 2026-11-19, round 2). Skyne's
     plan_board.py check refuses Checked done without stageDates.checked, and
     the board page writes that date on every tap, so marking Checked means
-    writing a fresh Checked date. A write fires when it sets
+    writing a fresh Checked date (a full time, or today's date in ET). A write fires when it sets
     stageDates.checked to a time near the write itself, and to a value this
     session has not already written for that feature. Re-sending a row
     (Built, Live, the Used number two weeks on) carries the OLD date, so it is
-    quiet. Not seen: a Checked marked with no date (the nightly copy-back
-    dates it and says so), and a re-send inside two hours of the mark from a
-    session that did not make the mark."""
+    quiet. Not seen: a Checked marked with no date (logged as undated, and the
+    next day's heartbeat counts it; the nightly copy-back flags the row
+    reviewOwed), and a re-send inside two hours of the mark from a session
+    that did not make the mark."""
 
     def __init__(self):
         self.sent = {}           # doc_id -> Checked date this session wrote
+        self.undated = []        # writes with Checked done and no date: logged, never enforced
 
     def marks(self, name, inp, ts: str = "") -> list:
         """Feature ids this call marks Checked. Also remembers what it wrote."""
         if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
             return []
         now = _when(ts) if ts else None
+        from w_cost import et_day
         out = []
         for w in _board_writes(inp):
             if not _is_features(w.get("collection")):
@@ -123,11 +126,23 @@ class CheckedWatch:
             data = _write_data(w)
             sd = (data or {}).get("stageDates")
             v = sd.get("checked") if isinstance(sd, dict) else None
-            if not v:
-                continue
             fid = str(w.get("doc_id") or "?")
-            at = _when(v)
-            fresh = at is not None and (now is None or now - CHECKED_WINDOW[0] <= at <= now + CHECKED_WINDOW[1])
+            st = (data or {}).get("s")
+            if not v:
+                # Claude's own writes have carried no date so far (Wince round 3: 0 of 22). A write with
+                # Checked done and no date may be a new mark or a re-send; the gate cannot tell, so it
+                # does not refuse (round 2 showed re-sends would force passes). It is logged, and the
+                # heartbeat says so the next day.
+                if isinstance(st, list) and len(st) in CHECKED_AT and st[CHECKED_AT[len(st)]] == "done":
+                    self.undated.append(fid)
+                continue
+            if len(str(v)) == 10:            # a date only: read it as that day in Garrett's time
+                fresh = now is None or str(v) == et_day(ts)
+            else:
+                at = _when(v)
+                fresh = at is not None and (now is None or now - CHECKED_WINDOW[0] <= at <= now + CHECKED_WINDOW[1])
+            if isinstance(st, list) and len(st) in CHECKED_AT and st[CHECKED_AT[len(st)]] != "done":
+                fresh = False                # Checked set back while the old date rides along
             if fresh and self.sent.get(fid) != v:
                 out.append(fid)
             self.sent[fid] = v
@@ -385,6 +400,7 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
     labels = {m.group(1) for t in (first, last) if (m := LABEL_RX.match(t))}
     return {"first_text": first, "last_text": last, "labels": labels,
             "writes": writes, "publishes": pubs, "unknown_figma": unknown, "checked": checked,
+            "undated_checked": sorted(set(watch.undated) - {f for _, f in checked}),
             "lens4_by_call": lens4, "lens4_by_agent": agent_loop}
 
 
@@ -524,10 +540,16 @@ def heartbeat_lines(today: str | None = None) -> list[str]:
     refused = [r for r in rows if r.get("action") == "refused"
                and et_day(str(r.get("utc"))) == yday and yday >= CHECKED_SINCE]
     chk = sum(1 for r in refused if "checked" in (r.get("triggers") or []))
+    undated = sorted({f for r in rows if r.get("gate") == "wince" and et_day(str(r.get("utc"))) == yday
+                      for f in (r.get("undated_checked") or [])})
+    if undated and yday >= CHECKED_SINCE:
+        out.append(f"{len(undated)} Plan board {'feature was' if len(undated) == 1 else 'features were'} written "
+                   f"with Checked done and no Checked date on {yday} ({', '.join(undated[:6])}): a new mark like that "
+                   f"asks no Wince or Wren. Tell Garrett, and write stageDates.checked with every Checked mark.")
     if len(refused) > FORCED_PASSES_ALERT:
         out.append(f"{len(refused)} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day: "
                    f"{chk} from a feature marked Checked, {len(refused) - chk} from a W agent run or an "
-                   f"unfiled grade. Tell Garrett and ask whether that part is still worth its cost.")
+                   f"unfiled grade. Tell Garrett and ask whether the Checked-only rule is still worth its cost.")
     # The label-share watch was cut 2026-11-19: it guarded the label trigger, which is retired.
     return out
 
@@ -708,6 +730,11 @@ def self_test() -> int:
         forced = lambda day: [x for x in heartbeat_lines(day) if "forced" in x]
         check(forced("2026-11-20") == [],
               "PLANTED: old-rule refusals (before the Checked-only day) do not set off the alert (Wince round 2)")
+        with open(lp, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"gate": "wince", "action": "allowed", "utc": "2026-11-21T21:00:00Z",
+                                 "undated_checked": ["CO-2"]}) + chr(10))
+        check(any("CO-2" in x and "no Checked date" in x for x in heartbeat_lines("2026-11-22")),
+              "PLANTED: a Checked written with no date is named in the next day's heartbeat (Wince round 3)")
         hb = forced("2026-11-22")
         check(len(hb) == 1 and "10 from a feature marked Checked, 3 from a W agent run" in hb[0],
               "PLANTED: the alert splits Checked refusals from the ones the change did not touch")

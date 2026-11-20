@@ -572,6 +572,7 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
                           "triggers": sorted(set(ev["triggers"])),
                           "owed_new": bool(ev["required"]), "labeled": ev["labeled"],
                           "old_rule": ev.get("old_rule", False),
+                          "undated_checked": ev["facts"].get("undated_checked", []),
                           "claude_wrote": ev["claude_wrote"],
                           "unknown_figma": sorted(set(ev["facts"]["unknown_figma"]))})
         if ev["mode"] == "enforce" and ev["session"] and not ev["cloud"]:
@@ -859,8 +860,12 @@ def self_test() -> int:
               "a new session re-sending a row with its OLD Checked date (Built, Live, the Used number) does not fire")
         check(go(u2, tu(2, "ArtifactData", {"action": "update", "url": "u", "collection": "features", "doc_id": "BL-1",
                                             "data": {"s": ["done", "done", "done", "done", "no", "no", "no"]}}, "nd"),
-                 says(3, "Marked it.")) is None,
-              "known blind spot: Checked marked with no date does not fire (check() refuses it; the nightly dates and reports it)")
+                 says(3, "Marked it.")) is None and flog()[-1]["undated_checked"] == ["BL-1"],
+              "known blind spot: Checked with no date does not refuse, but the log names it for the heartbeat")
+        out = go(u2, mk(2, when="2026-11-17"), says(3, "Checked."))
+        check(bool(out) and "BL-1" in out["reason"], "PLANTED: a date-only Checked (today, ET) fires (Wince round 3)")
+        check(go(u2, mk(2, ["done", "done", "done", "no", "no", "no", "no"], when=t % 2), says(3, "Undid it.")) is None,
+              "setting Checked back to not done, with the old date riding along, does not fire")
         fp = os.path.join(_scratch, "f-bl9.json")
         with open(fp, "w", encoding="utf-8") as fh:
             json.dump({"s": ["no", "done", "done", "done", "no", "no", "no"], "stageDates": {"checked": t % 2}}, fh)

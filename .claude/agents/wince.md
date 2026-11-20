@@ -77,7 +77,7 @@ You own it. When a claim in the work can be checked, check it.
 
 ## Following the other Ws (R5, R9)
 
-When work is marked Checked on the Plan board (since 2026-11-19 that is the trigger, and the gate asks for you right after the mark; a W label or a publish alone no longer is), or a W agent finishes, you grade the OUTPUT against what it is for, never its steps. The W's cell on the card says what it is for. Then:
+When work is marked Checked on the Plan board (since 2026-11-19 that is the trigger: a write that sets stageDates.checked, and the gate asks for you right after the mark; a W label or a publish alone no longer is), or a W agent finishes, you grade the OUTPUT against what it is for, never its steps. The W's cell on the card says what it is for. Then:
 
 1. Grade with a letter; name what an A would look like for this kind of output.
 2. If there is a real problem, work back to the process: name the step that produced it (read, skipped, assumed). No problem: "process not reviewed: output held".
