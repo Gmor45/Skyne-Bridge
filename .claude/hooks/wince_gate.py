@@ -209,12 +209,27 @@ def review_floor(entries: list[dict], b: int) -> tuple[str, dict]:
     return str(entries[at].get("timestamp") or "")[:19], w_follow.turn_facts(entries, at)
 
 
+def is_garrett_turn(e: dict) -> bool:
+    """A user entry Garrett typed. A background agent's finish arrives as a user
+    entry too (origin kind "task-notification", promptSource "system"); counting
+    it as his turn moved the review floor past a Wince that had just run, so the
+    Checked mark after his "yes" was refused (W red team round 3, transcript
+    1fbee306: Wince 16:09:00, its notification 16:09:04, "yes" 16:12). An entry
+    with no origin (older transcripts) is his."""
+    if (e.get("type") != "user" or e.get("isMeta") or e.get("toolUseResult")
+            or e.get("isSidechain")):
+        return False
+    kind = (e.get("origin") or {}).get("kind")
+    if kind and kind != "human":
+        return False
+    content = (e.get("message") or {}).get("content")
+    return not (isinstance(content, str) and content.lstrip().startswith("<task-notification>"))
+
+
 def last_user_boundary(entries: list[dict]) -> int:
-    """Index of the newest real user turn (same test as reply_gate.py)."""
+    """Index of the newest turn Garrett typed (see is_garrett_turn)."""
     for i in range(len(entries) - 1, -1, -1):
-        e = entries[i]
-        if (e.get("type") == "user" and not e.get("isMeta")
-                and not e.get("toolUseResult") and not e.get("isSidechain")):
+        if is_garrett_turn(entries[i]):
             return i
     return -1
 
@@ -275,7 +290,7 @@ def unfollowed(order: list[str]) -> list[str]:
 def refusal(ws: list[str], source: str) -> str:
     names = ", ".join(w.capitalize() for w in ws)
     return (f"Wince follows every W: {names} finished this turn "
-            f"and no Wince run came after it ({source}). Before replying, run the "
+            f"and no Wince run came after it ({source}). Before Claude finishes, run the "
             f"`wince` agent on that output: grade the "
             f"OUTPUT first, against what that W's output is for, and where it finds "
             f"a problem, work back to the process that produced it. Wince grades and "
@@ -620,7 +635,7 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
                 f"{'the work was last changed' if not wren_owed else 'the work was made and Wren tried it'}. "
                 + ("Run the `wren` agent first (he tries what was made, the lazy way), then ONE "
                    "`wince` pass over the work AND Wren's report. " if wren_owed else
-                   "Run the `wince` agent on the work before replying: "
+                   "Run the `wince` agent on the work before Claude finishes: "
                    "grade the OUTPUT first, work back to the process where it finds a problem. ")
                 + "A \"Wince:\" label is not a review; only a run of the agent counts. "
                   "Wince grades and names problems, it never rewrites. If the work was "
@@ -1185,6 +1200,29 @@ def self_test() -> int:
                  dict(says(7, "x"), timestamp=tp % 7), ub, mk_b, dict(says(12, "Marked."), timestamp=tp % 12),
                  log=[stop_row("wince", "aW3", "2026-11-17T15:59:02Z")])
         check(bool(out), "PLANTED: a review two turns back does not cover a mark")
+        check("before replying" not in refusal(["wander"], "w_ran").lower(),
+              "PLANTED: the refusal says 'before Claude finishes', not 'before replying' (round 3)")
+        out = go(ua, wr_a, mk_b, dict(says(12, "Marked.\nnothing for Wren to try: it is lore"),
+                                      timestamp=tp % 12))
+        check(bool(out) and "before claude finishes" in out["reason"].lower()
+              and "before replying" not in out["reason"].lower(),
+              "PLANTED: the Checked refusal with no Wren owed says 'before Claude finishes': "
+              + repr((out or {}).get("reason", ""))[:200])
+        # W red team round 3: a background agent's finish is not Garrett's turn. Shape copied from
+        # transcript 1fbee306 (2026-11-20T16:09:04Z); the runId and paths are shortened.
+        note = {"type": "user", "timestamp": tp % 8, "isSidechain": False, "promptSource": "system",
+                "origin": {"kind": "task-notification", "producer": "session-task", "runId": "x"},
+                "queueTranscriptOnly": True,
+                "message": {"role": "user", "content": "<task-notification>\n<task-id>a1</task-id>\n"
+                            "<status>completed</status>\n<summary>Agent \"Wince\" finished</summary>"}}
+        ub_h = dict(ub, origin={"kind": "human"}, promptSource="sdk")
+        check(go(ua, wr_a, dict(says(7, "Reviewed."), timestamp=tp % 7), note, ub_h, mk_b,
+                 dict(says(12, "Marked."), timestamp=tp % 12), log=rev) is None,
+              "PLANTED: a task-notification between the review and Garrett's yes does not move the floor")
+        check(not is_garrett_turn(note) and is_garrett_turn(ub_h) and is_garrett_turn(ub)
+              and not is_garrett_turn(dict(ub, message={"content": "<task-notification>\n<status>x"}))
+              and not is_garrett_turn(dict(note, message={"content": [{"type": "text", "text": "x"}]})),
+              "PLANTED: notifications (by origin, or by text in older logs) are not Garrett's turn")
 
         # the switch: log mode logs the NEW triggers, the old blocks keep blocking (R10)
         def set_mode(raw):

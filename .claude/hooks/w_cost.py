@@ -382,12 +382,12 @@ def line(path: str | None = None, hud=None, today: str | None = None) -> str:
             wk = (f" Max weekly {row['weekly_last']}% for the whole plan, all chats "
                   f"({'+' if d >= 0 else ''}{d} that day).")
         n, m = row["auto_runs"], row["manual_runs"]
-        by_hand = f" (and {m} more {'was' if m == 1 else 'were'} run by hand)" if m else ""
+        by_hand = f" (and {m} more that Claude started itself)" if m else ""
         parts.append(
             f"W follow-up cost, {yday}: the gates asked for {n} Wince/Wren run{'s' if n != 1 else ''}"
             f"{by_hand}. The ones the gates asked for wrote "
             f"{pct(row['share_output'])} of this PC's output that day ({fmt_tokens(a['output'])} of "
-            f"{fmt_tokens(row['all_tokens']['output'])}).{wk} Cloud runs not counted.")
+            f"{fmt_tokens(row['all_tokens']['output'])} tokens).{wk} Cloud runs not counted.")
         old, new = regimes([r for r in read_jsonl(path or cost_path())
                             if r.get("day", "") >= (go_live_day() or "")])
         if old and new:
@@ -616,6 +616,18 @@ def self_test() -> int:
         os.environ.pop("SKYNE_W_FOLLOW_GOLIVE", None)
         check("26 under the old wide trigger, 4 since the Checked-only change" in lt,
               "PLANTED: the start line gives the yardstick: runs a day before and after the change: " + lt)
+        check(" tokens)." in lt and "run by hand" not in lt and "that Claude started itself" in lt,
+              "PLANTED: the token counts carry a unit and hand runs read as 'that Claude started "
+              "itself': " + lt)
+        # the follow-through total is split at the trigger change too (W red team round 3)
+        fr = [{"gate": "wince", "action": "released", "session_id": "a", "utc": "2026-11-19T20:00:00Z",
+               "triggers": ["checked"]},
+              {"gate": "wince", "action": "released", "session_id": "b", "utc": "2026-11-20T20:00:00Z",
+               "triggers": ["checked"]}]
+        rv2 = review(rp, since="2026-11-18", follow_rows=fr, runs=[], grades=[])
+        check("Follow-through, old wide trigger: 1 of 1 refused reply never got" in rv2
+              and "Follow-through, Checked-only: 1 of 1 refused reply never got" in rv2,
+              "PLANTED: the review's follow-through is shown before and after the change: " + rv2)
         os.environ.pop("SKYNE_HUD_HISTORY", None)
     print(f"w_cost self-test: {sum(res)}/{len(res)} passed")
     return 0 if all(res) else 1
@@ -644,18 +656,21 @@ def review(path: str | None = None, since: str | None = None, follow_rows=None, 
         auto = sum(r["auto_runs"] for r in part)
         outs = [r["share_output"] for r in part]
         lines.append(f"  {label}: {n} day(s), {auto} gate-asked runs ({auto / n:.1f} a day, peak "
-                     f"{max(r['auto_runs'] for r in part)}; {sum(r['manual_runs'] for r in part)} more by "
-                     f"hand); they wrote {pct(sum(outs) / n)} of this PC's output on average "
+                     f"{max(r['auto_runs'] for r in part)}; {sum(r['manual_runs'] for r in part)} more "
+                     f"that Claude started itself); they wrote {pct(sum(outs) / n)} of this PC's output on average "
                      f"(worst day {pct(max(outs))}).")
     try:
         import w_follow
-        rel = unf = 0
-        for r in rows:
-            ft = w_follow.follow_through(r["day"], follow_rows, runs, grades)
-            rel += ft["released"]
-            unf += ft["unfollowed"]
-        lines.append(f"  Follow-through: {rel} refused repl{'y' if rel == 1 else 'ies'} went out on the "
-                     f"second try; {unf} never got the owed Wince/Wren run or filing afterwards.")
+        for label, part in zip(("old wide trigger", "Checked-only"), regimes(rows)):
+            c = {"released": 0, "followed": 0, "late": 0, "never": 0}
+            for r in part:
+                ft = w_follow.follow_through(r["day"], follow_rows, runs, grades)
+                for k in c:
+                    c[k] += ft[k]
+            n = c["released"]
+            lines.append(f"  Follow-through, {label}: {c['never']} of {n} refused repl"
+                         f"{'y' if n == 1 else 'ies'} never got the owed Wince/Wren run or filing; "
+                         f"{c['followed']} got it within 2 hours, {c['late']} later.")
     except Exception:                                           # noqa: BLE001
         lines.append("  Follow-through: could not be counted (w_follow did not load).")
     if wk:

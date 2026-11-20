@@ -277,7 +277,11 @@ def locked_append(path: str, line: str, wait_s: float = 2.0) -> bool:
                 break
             time.sleep(0.02)
         except OSError:
-            break
+            # Windows: creating a lock file that is still being deleted raises
+            # PermissionError. That is "busy": wait, as w_queue does (W red team round 3).
+            if time.time() > deadline:
+                break
+            time.sleep(0.02)
     try:
         with open(path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line if line.endswith("\n") else line + "\n")
@@ -547,9 +551,13 @@ def session_lines(today: str | None = None) -> list[str]:
         out.extend(got or [])
         return got
 
+    ft_state: dict = {}
+
     def mode_lines():
         nonlocal mode
         mode, note = read_mode()
+        if note:
+            problems.append("mode")           # a garbled switch file
         got = []
         if mode != "enforce":
             got.append("W follow-up gates are in LOG mode: the Checked trigger is recorded but "
@@ -563,7 +571,9 @@ def session_lines(today: str | None = None) -> list[str]:
         return [w_cost.line(today=today)]
     part("mode", mode_lines)
     problems += ["heartbeat"] if part("gate health", lambda: heartbeat_lines(today)) else []
-    part("follow-through", lambda: follow_through_lines(today))
+    part("follow-through", lambda: follow_through_lines(today, ft_state))
+    if ft_state.get("never"):
+        problems.append("follow-through")
     part("cost", cost_lines)
     problems += ["queue"] if part("queue", queue_lines) else []
     part("review", lambda: review_lines(today, healthy=not problems and mode == "enforce"))
@@ -587,13 +597,28 @@ def queue_rows(path: str) -> list[dict]:
         if r.get("test"):
             continue
         m = marks.get(r.get("key"))
-        if m and not r.get("flushed_in"):
+        if m and (not r.get("flushed_in")
+                  or str(m.get("flushed_utc") or "") > str(r.get("flushed_utc") or "")):
+            # a re-send whose rewrite failed: the row still names the dead PR (round 3)
             r = dict(r, flushed_in=m.get("flushed_in"), flushed_utc=m.get("flushed_utc"))
         rows.append(r)
     return rows
 
 
-def queue_lines(hours: int = 24, now: "_dt.datetime | None" = None) -> list[str]:
+def gh_pr_state(url: str) -> str | None:
+    """OPEN / CLOSED / MERGED for a PR url; None if gh cannot say (best effort)."""
+    import subprocess
+    if "/pull/" not in str(url):
+        return None
+    try:
+        r = subprocess.run(["gh", "pr", "view", str(url), "--json", "state", "-q", ".state"],
+                           capture_output=True, text=True, timeout=8, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (r.stdout.strip() or None) if r.returncode == 0 else None
+
+
+def queue_lines(hours: int = 24, now: "_dt.datetime | None" = None, pr_state=None) -> list[str]:
     """Grades and rounds that are NOT safely in Skyne's record yet: waiting on
     this PC, stuck in a save PR nobody merged, or damaged lines set aside.
     Saving them is Claude's job (skyne scripts/wince_grades.py flush and
@@ -609,11 +634,24 @@ def queue_lines(hours: int = 24, now: "_dt.datetime | None" = None) -> list[str]
                        f"(oldest {oldest[:10]}). Nothing for you to do: Claude saves them.")
         stuck = [r for r in rows if r.get("flushed_in")
                  and _age_s(r.get("flushed_utc") or r.get("queued_utc"), now) > hours * 3600]
-        if stuck:
-            prs = sorted({"#" + str(r["flushed_in"]).rstrip("/").rsplit("/", 1)[-1] for r in stuck})
-            out.append(f"{len(stuck)} {label} were sent to be saved more than a day ago, but the "
-                       f"pull request was never merged ({', '.join(prs)}). Claude merges it, or "
-                       f"re-sends them if it was closed.")
+        groups: dict = {"OPEN": [], "CLOSED": [], None: []}
+        for url in sorted({str(r["flushed_in"]) for r in stuck}):
+            st = (pr_state or gh_pr_state)(url)
+            if st == "MERGED":
+                continue          # merged: the next save drops them, or re-sends any it missed
+            groups[st if st in ("OPEN", "CLOSED") else None].append(
+                (url, sum(1 for r in stuck if str(r["flushed_in"]) == url)))
+
+        def nums(g):
+            return ", ".join("#" + u.rstrip("/").rsplit("/", 1)[-1] for u, _ in g)
+        for st, say in (("OPEN", "were sent to be saved more than a day ago, but the pull request "
+                                 "is still waiting to be merged ({}). Claude merges it."),
+                        ("CLOSED", "were in a pull request that was closed without being merged "
+                                   "({}). Claude sends them again."),
+                        (None, "were sent to be saved more than a day ago, and whether that pull "
+                               "request was merged could not be checked ({}). Claude checks.")):
+            if groups[st]:
+                out.append(f"{sum(n for _, n in groups[st])} {label} " + say.format(nums(groups[st])))
         try:
             with open(path + ".broken", encoding="utf-8", errors="replace") as f:
                 n = sum(1 for line in f if line.strip())
@@ -661,11 +699,14 @@ def heartbeat_lines(today: str | None = None) -> list[str]:
                    f"({', '.join(gates)}; last {str(errs[-1].get('utc'))[:16]}Z: "
                    f"{errs[-1].get('error', '?')}). While a gate crashes it lets every reply through. "
                    f"Tell Garrett in one line and fix it.")
-        try:
-            with open(crash_seen_path(), "w", encoding="utf-8") as f:
-                f.write(max(str(r.get("utc") or "") for r in errs))
-        except OSError:
-            pass
+        # Only a chat Garrett is in marks it reported: an unattended run (the 6-hourly
+        # SDK ping on this PC) has nobody to tell (W red team round 3).
+        if os.environ.get("CLAUDE_CODE_SESSION_ATTENDED") == "1":
+            try:
+                with open(crash_seen_path(), "w", encoding="utf-8") as f:
+                    f.write(max(str(r.get("utc") or "") for r in errs))
+            except OSError:
+                pass
     # The label-share watch was cut 2026-11-19: it guarded the label trigger, which is retired.
     return out
 
@@ -732,31 +773,40 @@ def follow_through(day: str, rows: list[dict] | None = None, runs: list[dict] | 
             rep[2].add(r.get("gate"))
         if "unfiled" in trig:
             rep[3] = True
-    out = {"released": len(replies), "followed": 0, "unfollowed": 0}
+    out = {"released": len(replies), "followed": 0, "late": 0, "never": 0}
     for sess, at, gates, filing in replies:
-        def within(x):
-            return x is not None and at <= x <= at + FOLLOW_WINDOW_S
-        ran = all(any(x.get("event") == "stop" and x.get("w") == g and x.get("session_id") == sess
-                      and within(t(x.get("utc"))) for x in runs) for g in gates)
-        filed = not filing or any(g.get("session") == sess
-                                  and within(t(g.get("queued_utc") or g.get("filed_utc")))
-                                  for g in grades)
-        out["followed" if ran and filed else "unfollowed"] += 1
+        def done_by(hi):
+            def within(x):
+                return x is not None and at <= x <= hi
+            ran = all(any(x.get("event") == "stop" and x.get("w") == g and x.get("session_id") == sess
+                          and within(t(x.get("utc"))) for x in runs) for g in gates)
+            filed = not filing or any(g.get("session") == sess
+                                      and within(t(g.get("queued_utc") or g.get("filed_utc")))
+                                      for g in grades)
+            return ran and filed
+        out["followed" if done_by(at + FOLLOW_WINDOW_S) else "late" if done_by(float("inf"))
+            else "never"] += 1
+    out["unfollowed"] = out["late"] + out["never"]
     return out
 
 
-def follow_through_lines(today: str | None = None) -> list[str]:
-    """One plain line: of yesterday's refused replies that went out anyway, how
-    many were never followed by the owed Wince/Wren run or filing. Silent on a
-    day with no releases. A readout, not an alarm: the day-14 review uses it."""
+def follow_through_lines(today: str | None = None, state: dict | None = None) -> list[str]:
+    """One plain line, the point first: of yesterday's refused replies that went
+    out anyway, how many NEVER got the owed Wince/Wren run or filing, then how
+    many got it within the 2-hour window and how many later (W red team round 3:
+    "36 never got it" counted 29 that came late). Silent on a day with no
+    releases. `state` receives the counts, for the status line."""
     from w_cost import et_today, prev_day
     yday = prev_day(today or et_today())
     ft = follow_through(yday)
-    if not ft["released"]:
+    if state is not None:
+        state.update(ft)
+    n = ft["released"]
+    if not n:
         return []
-    return [f"W follow-through, {yday}: {ft['released']} refused repl{'y' if ft['released'] == 1 else 'ies'} "
-            f"went out on the second try; {ft['unfollowed']} never got the owed Wince/Wren run or "
-            f"grade filing afterwards, {ft['followed']} did."]
+    return [f"W follow-through, {yday}: {ft['never']} of {n} refused repl{'y' if n == 1 else 'ies'} "
+            f"never got the owed Wince/Wren run or grade filing. {ft['followed']} got it within "
+            f"2 hours, {ft['late']} later."]
 
 
 def _recent_activity(now) -> bool:
@@ -789,15 +839,15 @@ def review_lines(today: str | None = None, healthy: bool = False) -> list[str]:
         return []
     due = g.get("review_on", "9999-99-99")
     if today < due:
-        if not healthy:
-            return []
         try:
             d = _dt.date.fromisoformat(due)
             left = (d - _dt.date.fromisoformat(today)).days
             when = f"{d.strftime('%b')} {d.day} (in {left} day{'s' if left != 1 else ''})"
         except ValueError:
             when = due
-        return [f"W helpers: running, nothing broken. Their day-14 review is due {when}: "
+        state = ("running, nothing broken" if healthy else
+                 "running, with a problem named above that Claude deals with")
+        return [f"W helpers: {state}. Their day-14 review is due {when}: "
                 f"Claude brings you the numbers then."]
     return [f"DAY-14 REVIEW DUE: the W follow-up gates went live on {g['go_live']}. "
             f"Run `python3 {os.path.join(HERE, 'w_cost.py')} review` and bring Garrett the real numbers "
@@ -952,7 +1002,26 @@ def self_test() -> int:
                                  "flushed_utc": "2026-11-19T23:30:00Z"}) + "\n")
         with open(gq + ".broken", "w", encoding="utf-8") as fh:
             fh.write('{"half a line\n98f6"\n')
-        ql = queue_lines(now=_dt.datetime(2026, 11, 20, 12, tzinfo=_dt.timezone.utc))
+        with open(gq, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"key": "m1", "queued_utc": "2026-11-10T00:00:00Z",
+                                 "flushed_in": "https://github.com/x/y/pull/980"}) + "\n")
+            fh.write(json.dumps({"key": "c1", "queued_utc": "2026-11-10T00:00:00Z",
+                                 "flushed_in": "https://github.com/x/y/pull/981"}) + "\n")
+            fh.write(json.dumps({"key": "r1", "queued_utc": "2026-11-10T00:00:00Z",
+                                 "flushed_in": "https://github.com/x/y/pull/1",
+                                 "flushed_utc": "2026-11-10T00:00:00Z"}) + "\n")
+        with open(gq + ".marks", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"key": "r1", "flushed_in": "https://github.com/x/y/pull/1071",
+                                 "flushed_utc": "2026-11-20T11:00:00Z"}) + "\n")
+        states = {"972": "OPEN", "980": "MERGED", "981": "CLOSED", "1": "CLOSED"}
+        ql = queue_lines(now=_dt.datetime(2026, 11, 20, 12, tzinfo=_dt.timezone.utc),
+                         pr_state=lambda u: states.get(u.rsplit("/", 1)[-1]))
+        check(not any("#980" in x for x in ql) and any("closed without being merged" in x and "#981" in x
+                                                        for x in ql),
+              "PLANTED: a merged PR is not called 'never merged'; a closed one is named as closed: "
+              + repr(ql))
+        check(not any("#1," in x or "#1)" in x for x in ql),
+              "PLANTED: a re-send's newer mark beats the dead PR still in the row (#1 is not named)")
         check(any(x.startswith("1 Wince grades are waiting") for x in ql),
               "PLANTED: a row waiting on this PC is named; one whose mark sits in .marks is not "
               "waiting: " + repr(ql))
@@ -976,7 +1045,10 @@ def self_test() -> int:
         g = json.load(open(gp))
         check(g["go_live"] == "2026-11-18" and g["review_on"] == "2026-12-02",
               "go-live is recorded once, review date = +14 days")
-        check(review_lines("2026-12-01") == [], "no alarm one day before the review")
+        check(review_lines("2026-12-01") == ["W helpers: running, with a problem named above that Claude "
+                                             "deals with. Their day-14 review is due Dec 2 (in 1 day): "
+                                             "Claude brings you the numbers then."],
+              "PLANTED: when something is wrong the status line never says 'nothing broken'")
         check(review_lines("2026-11-20", healthy=True)
               == ["W helpers: running, nothing broken. Their day-14 review is due Dec 2 (in 12 days): "
                   "Claude brings you the numbers then."],
@@ -1006,6 +1078,14 @@ def self_test() -> int:
         with open(lp, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"gate": "wince", "action": "error", "utc": "2026-11-18T22:00:00Z",
                                  "error": "KeyError: old"}) + "\n")
+        was_att = os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")
+        os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = "0"
+        hb0 = heartbeat_lines("2026-11-22")
+        check(any("KeyError: old" in x for x in hb0)
+              and not os.path.exists(os.environ["SKYNE_W_CRASH_SEEN"]),
+              "PLANTED: an unattended start-up (the 6-hourly ping) names the crash but does not mark "
+              "it reported, so Garrett's next chat still hears it")
+        os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
         hb1 = heartbeat_lines("2026-11-22")
         check(any("gate crash" in x and "KeyError: old" in x for x in hb1),
               "PLANTED: a crash followed by days with no start-up is still named (it used to be "
@@ -1043,6 +1123,44 @@ def self_test() -> int:
               "that failed is named: " + repr(sl)[:300])
         os.environ.pop("SKYNE_W_CRASH_SEEN", None)
         os.environ.pop("SKYNE_PROJECTS_DIR", None)
+        if was_att is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = was_att
+        # the status line, with each part stubbed (W red team round 3)
+        g2 = dict(g, reviewed=False)
+        json.dump(g2, open(gp, "w"))
+        G = globals()
+        saved_parts = {k: G[k] for k in ("heartbeat_lines", "follow_through_lines", "queue_lines", "read_mode")}
+        saved_cost = sys.modules.get("w_cost")
+        import types as _types
+        sys.modules["w_cost"] = _types.SimpleNamespace(ensure_yesterday_in_background=lambda t: None,
+                                                       line=lambda today=None: "cost",
+                                                       et_today=lambda: "2026-11-20")
+
+        def status(hb=(), never=0, note=""):
+            G["heartbeat_lines"] = lambda t=None: list(hb)
+            G["follow_through_lines"] = lambda t=None, st=None: (st.update(never=never) if st is not None
+                                                                 else None) or ["ft"]
+            G["queue_lines"] = lambda *a, **k: []
+            G["read_mode"] = lambda: ("enforce", note)
+            return [x for x in session_lines("2026-11-20") if x.startswith("W helpers:")]
+        try:
+            ok_line = status()
+            crash = status(hb=["1 Wince/Wren gate crash(es) since ..."])
+            leak = status(never=3)
+            garbled = status(note="w-follow-mode says 'banana'")
+        finally:
+            G.update(saved_parts)
+            if saved_cost is not None:
+                sys.modules["w_cost"] = saved_cost
+            else:
+                sys.modules.pop("w_cost", None)
+        check(len(ok_line) == 1 and "nothing broken" in ok_line[0],
+              "with every part clean the status line says nothing is broken")
+        check(all(len(x) == 1 and "nothing broken" not in x[0] for x in (crash, leak, garbled)),
+              "PLANTED: beside a crash line, a never-followed refusal, or a garbled switch, the status "
+              "line does not say 'nothing broken': " + repr((crash, leak, garbled))[:300])
         # follow-through: released rows matched to what came after them
         rel = [{"gate": "wince", "action": "released", "session_id": "s1", "utc": "2026-11-21T20:00:00Z",
                 "triggers": ["checked"]},
@@ -1056,15 +1174,65 @@ def self_test() -> int:
                  {"event": "stop", "w": "wren", "session_id": "s1", "utc": "2026-11-21T19:59:00Z"}]
         grades_ = [{"session": "s2", "queued_utc": "2026-11-21T21:05:00Z"}]
         ft = follow_through("2026-11-21", rel, runs_, grades_)
-        check(ft == {"released": 3, "followed": 1, "unfollowed": 2},
+        check(ft == {"released": 3, "followed": 1, "late": 0, "never": 2, "unfollowed": 2},
               "PLANTED: one reply refused by BOTH gates is one reply (3 replies, not 4); it needs both "
               "runs, and its Wren run came BEFORE the release; s2 filed, s3 never did: " + repr(ft))
         late = [{"session": "s3", "queued_utc": "2026-11-22T01:30:00Z"}]
         main_row = [{"session": "s3", "filed_utc": "2026-11-21T21:10:00Z"}]
-        check(follow_through("2026-11-21", rel, runs_, grades_ + late)["followed"] == 1
+        fl = follow_through("2026-11-21", rel, runs_, grades_ + late)
+        check(fl["followed"] == 1 and fl["late"] == 1 and fl["never"] == 1
               and follow_through("2026-11-21", rel, runs_, grades_ + main_row)["followed"] == 2,
-              "PLANTED: a filing 4.5 hours later is outside the window; a row already on main "
+              "PLANTED: a filing 4.5 hours later counts as LATE, not never; a row already on main "
               "(filed_utc, no queue row) counts")
+        # W red team round 3: tests that could not fail
+        other = [{"gate": "wince", "action": "released", "session_id": "s4", "utc": "2026-11-21T22:00:00Z",
+                  "triggers": ["checked"]}]
+        check(follow_through("2026-11-21", other,
+                             [{"event": "stop", "w": "wince", "session_id": "elsewhere",
+                               "utc": "2026-11-21T22:05:00Z"}], [])["never"] == 1,
+              "PLANTED: a Wince run in ANOTHER chat is not this reply's follow-through")
+        saved_mr = globals()["main_register_rows"]
+        globals()["main_register_rows"] = lambda: [{"session": "s3", "filed_utc": "2026-11-21T21:10:00Z"}]
+        os.environ["SKYNE_GRADES_QUEUE"] = os.path.join(d, "none-g.jsonl")
+        os.environ["SKYNE_ROUNDS_QUEUE"] = os.path.join(d, "none-r.jsonl")
+        try:
+            via_main = follow_through("2026-11-21", rel[3:], [], None)
+        finally:
+            globals()["main_register_rows"] = saved_mr
+            os.environ.pop("SKYNE_GRADES_QUEUE", None)
+            os.environ.pop("SKYNE_ROUNDS_QUEUE", None)
+        check(via_main["followed"] == 1,
+              "PLANTED: with no grades given, the filings on Skyne's main are read: " + repr(via_main))
+        line = None
+        G2 = globals()
+        saved_ft = G2["follow_through"]
+        G2["follow_through"] = lambda day: {"released": 70, "followed": 34, "late": 29, "never": 7,
+                                            "unfollowed": 36}
+        try:
+            line = follow_through_lines("2026-11-20")[0]
+        finally:
+            G2["follow_through"] = saved_ft
+        check(line == "W follow-through, 2026-11-19: 7 of 70 refused replies never got the owed Wince/Wren "
+                      "run or grade filing. 34 got it within 2 hours, 29 later.",
+              "PLANTED: the line leads with the never-followed count and splits late from never: " + line)
+        # 4g: a lock file being deleted (PermissionError) is waited out, not written past
+        lp2 = os.path.join(d, "perm.jsonl")
+        tries = {"n": 0}
+        real_open = os.open
+
+        def flaky(p, flags, *a):
+            if str(p).endswith(".wlock"):
+                tries["n"] += 1
+                if tries["n"] == 1:
+                    raise PermissionError(13, "pending delete")
+            return real_open(p, flags, *a)
+        os.open = flaky
+        try:
+            locked_append(lp2, '{"a": 1}')
+        finally:
+            os.open = real_open
+        check(tries["n"] == 2 and read_jsonl(lp2) == [{"a": 1}] and not os.path.exists(lp2 + ".wlock"),
+              "PLANTED: a PermissionError on the lock file is waited out and the lock is then taken")
         # torn lines: many writers at once leave whole lines
         import threading
         tp = os.path.join(d, "torn.jsonl")
