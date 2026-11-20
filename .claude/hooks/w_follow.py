@@ -531,6 +531,77 @@ def unfiled_runs(runs: list[dict], fil: dict, escape_ts: str = "") -> list[dict]
     return owed
 
 
+# RULED 2026-11-20 (board question W-round-record-block): a missing red-team
+# round record stops Claude again, but only once EVERY lens agent of that
+# loop's round has finished, so lens 4 finishing first is not refused. The
+# red-team skill tags all four lens prompts `[red-team lens N: <loop id>]`.
+LENS_RX = re.compile(r"\[red-team lens ([1-4]):\s*([^\]\s][^\]]*?)\s*\]")
+NOTIFY_CALL_RX = re.compile(r"<tool-use-id>\s*([^<\s]+)\s*</tool-use-id>")
+NOTIFY_STATUS_RX = re.compile(r"<status>\s*([A-Za-z_]+)\s*</status>")
+NOTIFY_DONE = {"completed", "failed", "killed", "stopped", "error"}
+
+
+def lens_runs(entries: list[dict]) -> dict:
+    """{loop: [{lens, call, launched, finished}]} for every tagged red-team lens
+    agent in the session. A lens finishes at its synchronous tool_result, or,
+    when it ran in the background, at the task-notification that names its
+    tool-use id (the latest one, since a resumed agent notifies again)."""
+    calls: dict[str, dict] = {}
+    for e in entries:
+        if e.get("isSidechain"):
+            continue
+        ts = _ts(e.get("timestamp"))
+        content = (e.get("message") or {}).get("content")
+        if e.get("type") == "assistant" and isinstance(content, list):
+            for b in content:
+                if (isinstance(b, dict) and b.get("type") == "tool_use"
+                        and b.get("name") in ("Agent", "Task")):
+                    m = LENS_RX.search(str((b.get("input") or {}).get("prompt") or ""))
+                    if m:
+                        calls[b.get("id")] = {"lens": int(m.group(1)), "loop": m.group(2).strip(),
+                                              "call": b.get("id"), "launched": ts, "finished": ""}
+        elif e.get("type") == "user" and isinstance(content, list) and calls:
+            tur = e.get("toolUseResult")
+            launched = isinstance(tur, dict) and (tur.get("isAsync") or tur.get("status") == "async_launched")
+            for b in content:
+                if (isinstance(b, dict) and b.get("type") == "tool_result"
+                        and b.get("tool_use_id") in calls and not launched
+                        and "Async agent launched" not in json.dumps(b.get("content"))):
+                    run = calls[b["tool_use_id"]]
+                    run["finished"] = max(run["finished"], ts)
+        elif (e.get("type") == "user" and isinstance(content, str)
+              and content.lstrip().startswith("<task-notification>") and calls):
+            m, st = NOTIFY_CALL_RX.search(content), NOTIFY_STATUS_RX.search(content)
+            if m and m.group(1) in calls and st and st.group(1).lower() in NOTIFY_DONE:
+                run = calls[m.group(1)]
+                run["finished"] = max(run["finished"], ts)
+    out: dict[str, list] = {}
+    for run in calls.values():
+        out.setdefault(run["loop"], []).append(run)
+    return out
+
+
+def unfiled_rounds(entries: list[dict], fil: dict, escape_ts: str = "") -> list[str]:
+    """Loops whose latest round is complete (lenses 1 to 4 all launched since
+    the loop's last round row, and every one of them finished) with no round
+    row after it. A round still running, or one with only lens 4 tagged (the
+    old prompts), owes nothing yet."""
+    owed = []
+    for loop, runs in sorted(lens_runs(entries).items()):
+        filed = sorted(fil.get("rounds", {}).get(loop, []))
+        last = filed[-1] if filed else ""
+        pending = [r for r in runs if r["launched"] > last]
+        if not pending or {r["lens"] for r in pending} < {1, 2, 3, 4}:
+            continue
+        if not all(r["finished"] for r in pending):
+            continue
+        done = max(r["finished"] for r in pending)
+        if escape_ts and escape_ts >= done:
+            continue
+        owed.append(loop)
+    return owed
+
+
 # ------------------------------------------------------------------ session lines
 
 def session_lines(today: str | None = None) -> list[str]:

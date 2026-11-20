@@ -107,6 +107,11 @@ Two NEW triggers join the agent-W one, and the filed-check is rebuilt:
   reviewers are in; W red team round 2). Each filing counts once wherever it is
   seen. Typing the script's NAME no longer counts. One filing covers one
   finish. `no grade to file: <why>` still accounts for the finishes before it.
+* The round record (RULED 2026-11-20): when lenses 1 to 4 of a red-team loop
+  (each prompt tagged `[red-team lens N: <loop id>]`) have ALL finished since
+  that loop's last round row, a `redteam_rounds.py` row for the loop is owed.
+  A round still running owes nothing, so lens 4 finishing first is not refused.
+  Background lenses finish at the task-notification naming their tool-use id.
 * The switch `~/.claude/skyne/w-follow-mode` (w_follow.py): `log` makes the NEW
   triggers record "would have refused" and refuse nothing. The agent-W trigger,
   unbacked overrules and the filed-check keep blocking either way (R10).
@@ -541,6 +546,27 @@ def owed_filings(entries, rows, session, facts, cwd="") -> list[dict]:
     return owed
 
 
+def owed_rounds(entries, session, cwd="") -> list[str]:
+    """Red-team loops whose round is complete and unrecorded (RULED 2026-11-20)."""
+    if not w_follow.lens_runs(entries):
+        return []
+    esc = last_escape_ts(entries)
+    owed = w_follow.unfiled_rounds(entries, w_follow.filings(session), esc)
+    if owed:
+        regs = origin_register_files(session, register_candidates(cwd, filer_dirs(entries)))
+        extra = [x for x in os.environ.get("SKYNE_EXTRA_REGISTERS", "").split(os.pathsep) if x]
+        try:
+            owed = w_follow.unfiled_rounds(entries, w_follow.filings(session, regs + extra), esc)
+        finally:
+            for pth in regs:
+                if os.path.basename(pth).startswith("origin-reg-"):
+                    try:
+                        os.unlink(pth)
+                    except OSError:
+                        pass
+    return owed
+
+
 def evaluate(payload: dict, log_rows: list[dict] | None = None,
              overrules_path: str | None = None) -> dict | None:
     """Everything the gate knows about this turn. None if there is no turn."""
@@ -589,6 +615,16 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
                 f"queue (or a register in a skyne checkout this session ran the writer in). "
                 f"If a Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
             ev["triggers"].append("unfiled")
+        rounds_owed = owed_rounds(entries, session, str(payload.get("cwd") or ""))
+        if rounds_owed:
+            ev["always"].append(
+                f"Red-team review {', '.join(rounds_owed)}: all four reviewers have finished, but "
+                f"the round is not recorded. Record it before Claude finishes: `python3 "
+                f"scripts/redteam_rounds.py queue ...` with the four lenses' findings and Wince's "
+                f"letter. The 3-round limit counts these records, so an unrecorded round cannot "
+                f"be counted (RULED 2026-11-20). If it was not a real round, say \"no grade to "
+                f"file: <why>\" in one line.")
+            ev["triggers"].append("round-unfiled")
 
     # --- the agent-W trigger (as before) ----------------------------------------
     order = from_log(rows, session, since) if session and len(since) == 20 else []
@@ -1108,6 +1144,58 @@ def self_test() -> int:
         check(out is None,
               "a tagged lens-4 run followed by its wince_grades row passes: the round itself is filed "
               "once all four reviewers are in (W red team round 2)")
+
+        # RULED 2026-11-20: the round record stops Claude again, once every lens has finished
+        def notif(sec, tid, status="completed"):
+            return {"type": "user", "timestamp": t % sec, "promptSource": "system",
+                    "origin": {"kind": "task-notification"},
+                    "message": {"content": "<task-notification>\n<task-id>x" + tid + "</task-id>\n"
+                                           "<tool-use-id>" + tid + "</tool-use-id>\n<status>" + status +
+                                           "</status>\n<summary>Agent finished</summary>\n</task-notification>"}}
+
+        def lenses(loop, ids, sec):
+            out = []
+            for n, tid in zip((1, 2, 3, 4), ids):
+                who = "wince" if n == 4 else "general-purpose"
+                out += [agent(sec, who, tid, f"[red-team lens {n}: {loop}] review the deck"),
+                        async_back(sec, tid, "ag" + tid)]
+            return out
+        rt = [u2, says(1, "Reviewing.")] + lenses("R5", ["r51", "r52", "r53", "r54"], 2)
+        out = go(*rt, notif(5, "r54"), says(6, "Waiting on the other lenses."), session_id="s5")
+        check(out is None, "PLANTED: lens 4 finishing first, other lenses still running, is not refused")
+        out = go(*rt, notif(5, "r54"), notif(6, "r51"), notif(7, "r52"), notif(8, "r53", "failed"),
+                 says(9, "Round done."), session_id="s5")
+        check(bool(out) and "Red-team review R5" in out["reason"] and "not recorded" in out["reason"]
+              and "round-unfiled" in flog()[-1]["triggers"],
+              "PLANTED: all four lenses finished (one failed) and no round record is refused")
+        check(go(*rt, notif(5, "r54"), notif(6, "r51"), notif(7, "r52"), notif(8, "r53"),
+                 says(9, "no grade to file: test run"), session_id="s5") is None,
+              "the escape line after the last finish accounts for the round")
+        queue_row(os.environ["SKYNE_ROUNDS_QUEUE"], session="s5", loop="R9", queued_utc="2026-11-17T15:00:10Z")
+        check(go(*rt, notif(5, "r54"), notif(6, "r51"), notif(7, "r52"), notif(8, "r53"),
+                 says(9, "Round done."), session_id="s5") is not None,
+              "a round record for a different loop does not count")
+        queue_row(os.environ["SKYNE_ROUNDS_QUEUE"], session="s5", loop="R5", queued_utc="2026-11-17T15:00:10Z")
+        done1 = rt + [notif(5, "r54"), notif(6, "r51"), notif(7, "r52"), notif(8, "r53")]
+        check(go(*done1, says(11, "Filed."), session_id="s5") is None,
+              "PLANTED: the round recorded after all four finished passes")
+        rt2 = done1 + lenses("R5", ["r61", "r62", "r63", "r64"], 12)
+        check(go(*rt2, notif(13, "r61"), notif(14, "r64"), says(15, "Round 2 running."), session_id="s5") is None,
+              "round 2 half finished owes nothing yet")
+        out = go(*rt2, notif(13, "r61"), notif(14, "r64"), notif(15, "r62"), notif(16, "r63"),
+                 says(17, "Round 2 done."), session_id="s5")
+        check(bool(out) and "R5" in out["reason"],
+              "PLANTED: round 2 complete is owed its own record (round 1's does not cover it)")
+        sync = [u2] + [x for n, tid in zip((1, 2, 3, 4), ("q1", "q2", "q3", "q4"))
+                       for x in (agent(2, "general-purpose", tid, f"[red-team lens {n}: R6] x"), sync_back(3, tid))]
+        check(bool(go(*sync, says(4, "Done."), session_id="s6")),
+              "four synchronous lenses that returned owe the round record too")
+        old = [u2, agent(2, "wince", "o4", "[red-team lens 4: R7] grade"), sync_back(3, "o4"),
+               says(4, "Graded."), agent(5, "general-purpose", "o1", "coverage lens"),
+               sync_back(6, "o1"), says(7, "Done.")]
+        queue_row(os.environ["SKYNE_GRADES_QUEUE"], session="s7", queued_utc="2026-11-17T15:00:04Z", key="g7")
+        check(go(*old, session_id="s7") is None,
+              "only lens 4 tagged (the old prompts) owes no round record: the gate cannot see the round")
 
         # the filed-check by CONTENT
         qa = tmp_q = os.path.join(_scratch, "gq.jsonl")
