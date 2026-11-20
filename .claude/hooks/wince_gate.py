@@ -113,11 +113,22 @@ Two NEW triggers join the agent-W one, and the filed-check is rebuilt:
   filed-check rules apply: R12 is NOT live there until a cloud session has
   confirmed delivery and the attended/scheduled signal.
 
+HOW A REFUSAL IS SENT (W red team round 1, 2026-11-20)
+-----------------------------------------------------
+As `hookSpecificOutput.additionalContext`, not `decision: "block"`. Claude Code's
+hooks doc: additionalContext on Stop is "Non-error feedback for Claude. The
+conversation continues so Claude can act on it, but unlike decision: "block" it
+is shown in the transcript as hook feedback rather than a hook error", with the
+same `stop_hook_active` and 8-continuation protections. Garrett saw 80+ red
+"hook error" notices a day for the gate doing its job. The text opens with one
+plain line telling him there is nothing for him to do, and carries no rule
+numbers, plugin ids or the off switch (the switch is his, R10).
+
 NEVER TRAPS A SESSION
 ---------------------
 `stop_hook_active` (the platform's re-entry flag) means it already refused once
-this turn: it allows (and logs "released"). Every error path prints nothing and
-exits 0.
+this turn: it allows (and logs "released"). An error prints nothing and exits 0,
+and writes an `error` row to the log so the next session's heartbeat names it.
 
 Usage:
     python3 wince_gate.py             # the hook (JSON on stdin)
@@ -131,8 +142,40 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from w_ran import log_path, member  # noqa: E402  -- one W roster, one log path
-import w_follow  # noqa: E402  -- the switch, the log, publish detection, filings
+try:
+    from w_ran import log_path, member  # noqa: E402  -- one W roster, one log path
+    import w_follow  # noqa: E402  -- the switch, the log, publish detection, filings
+    IMPORT_ERROR = None
+except Exception as _exc:  # noqa: BLE001 -- W red team round 1: a broken import left no trace
+    IMPORT_ERROR = _exc
+    w_follow = None
+
+
+def _raw_error_row(gate: str, exc: BaseException) -> None:
+    """Write an error row with nothing but the standard library (w_follow may be what broke)."""
+    try:
+        import datetime as _dt
+        path = os.environ.get("SKYNE_W_FOLLOW_LOG") or os.path.join(
+            os.path.expanduser("~"), ".claude", "skyne", "w-follow.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        row = {"utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "gate": gate, "action": "error", "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        with open(path, "a", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(row, sort_keys=True) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+LEAD = ("Claude owes a Wince/Wren follow-up before this reply goes out. Nothing for you "
+        "to do, Garrett: this is Claude's checklist.")
+
+
+def hook_output(out: dict | None) -> dict | None:
+    """The gate's verdict as the JSON a Stop hook prints: non-error feedback."""
+    if not out:
+        return None
+    return {"hookSpecificOutput": {"hookEventName": "Stop",
+                                   "additionalContext": LEAD + "\n\n" + out["reason"]}}
 
 CRITIC = "wince"
 
@@ -221,9 +264,9 @@ def unfollowed(order: list[str]) -> list[str]:
 
 def refusal(ws: list[str], source: str) -> str:
     names = ", ".join(w.capitalize() for w in ws)
-    return (f"Wince follows every W (RULED 2026-10-12): {names} finished this turn "
+    return (f"Wince follows every W: {names} finished this turn "
             f"and no Wince run came after it ({source}). Before replying, run the "
-            f"`wince` agent (load-house-rules:wince) on that output: grade the "
+            f"`wince` agent on that output: grade the "
             f"OUTPUT first, against what that W's output is for, and where it finds "
             f"a problem, work back to the process that produced it. Wince grades and "
             f"names problems; it never rewrites. If Wince is unavailable in this "
@@ -249,10 +292,11 @@ def wince_finishes(entries: list[dict], rows: list[dict], session: str) -> list[
     """When each Wince run in this session FINISHED. The log when it has rows
     for this session, else the transcript -- the same precedence as the
     W-follow check, so one run is never counted twice (Wince, hook pass 1)."""
-    # One row per agent_id: on the work laptop w_ran.py is registered twice
-    # (plugin and personal copy), so every event lands twice -- measured
-    # 2026-10-14 on this very session's log.
-    logged = {r.get("agent_id") or (r.get("utc"), i): _ts(r.get("utc"))
+    # One row per (agent_id, finish time): w_ran.py registered twice writes the SAME
+    # row twice, while a Wince continued with SendMessage finishes again LATER, and
+    # each of those finishes is its own pass (W red team round 1, 2026-11-20).
+    logged = {(r.get("agent_id"), _ts(r.get("utc"))) if r.get("agent_id") else (r.get("utc"), i):
+              _ts(r.get("utc"))
               for i, r in enumerate(rows)
               if r.get("event") == "stop" and r.get("w") == CRITIC
               and r.get("session_id") == session}
@@ -326,9 +370,12 @@ def agent_runs(entries: list[dict], rows: list[dict], session: str, who: str,
     for i, r in enumerate(rows):
         if (r.get("event") == "stop" and r.get("w") == who
                 and r.get("session_id") == session):
-            key = r.get("agent_id") or (r.get("utc"), i)
+            # (agent, finish time): a double-registered hook writes the same row twice, but a
+            # continued agent (SendMessage) finishes again later and that is a new pass
+            # (W red team round 1: session ee79be7b was refused although Wince had re-finished).
+            key = (r.get("agent_id"), _ts(r.get("utc"))) if r.get("agent_id") else (r.get("utc"), i)
             if key in seen:
-                continue          # the hook can be registered twice: one row per agent
+                continue
             seen.add(key)
             logged.append({"finish": _ts(r.get("utc")), "agent_id": r.get("agent_id"),
                            "loop": facts["lens4_by_agent"].get(r.get("agent_id"))})
@@ -368,11 +415,53 @@ def last_escape_ts(entries: list[dict]) -> str:
     return last
 
 
-def register_candidates(cwd: str) -> list[str]:
+FILER_PATH_RX = re.compile(r"""([A-Za-z]:[\\/][^\s"'`;&|]*?|/[^\s"'`;&|]*?|\.{1,2}[\\/][^\s"'`;&|]*?)[\\/]scripts[\\/](?:wince_grades|redteam_rounds)\.py""")
+CD_RX = re.compile(r"""(?:^|&&|;|\n|\|\|)\s*(?:cd|Set-Location|git\s+-C)\s+("[^"]+"|'[^']+'|[^\s;&|]+)""")
+
+
+def _norm_dir(path: str, base: str) -> str:
+    path = path.strip().strip("'\"")
+    m = re.match(r"^/([a-zA-Z])/(.*)$", path)          # Git Bash: /c/Users/... -> C:/Users/...
+    if m and os.name == "nt":
+        path = f"{m.group(1).upper()}:/{m.group(2)}"
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path) and base:
+        path = os.path.join(base, path)
+    return os.path.normpath(path)
+
+
+def filer_dirs(entries: list[dict]) -> list[str]:
+    """Skyne checkouts this session ran the grade or round writer in (W red team round 1:
+    an `add` run in a scratchpad clone was never seen, and the session was refused five
+    times). Read from the shell commands that name the writer: the folder before
+    scripts/<writer>.py, a `cd`/`git -C` folder, and the turn's own cwd."""
+    found = []
+    for e in entries:
+        if e.get("type") != "assistant" or e.get("isSidechain"):
+            continue
+        base = str(e.get("cwd") or "")
+        for b in (e.get("message") or {}).get("content") or []:
+            if not (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in SHELLS):
+                continue
+            cmd = str((b.get("input") or {}).get("command") or "")
+            if "wince_grades" not in cmd and "redteam_rounds" not in cmd:
+                continue
+            cands = [base] + [m.group(1) for m in FILER_PATH_RX.finditer(cmd)] \
+                + [m.group(1) for m in CD_RX.finditer(cmd)]
+            for c in cands:
+                if not c:
+                    continue
+                d = _norm_dir(c, base)
+                if os.path.isfile(os.path.join(d, "data", "wince-grades.json")) and d not in found:
+                    found.append(d)
+    return found
+
+
+def register_candidates(cwd: str, extra: list[str] | None = None) -> list[str]:
     """Skyne checkouts whose registers may already hold this session's filings."""
     home = os.path.expanduser("~")
     roots = [cwd, os.environ.get("SKYNE_DIR", ""), os.path.join(home, "claude-audit-wt-live"),
-             os.path.join(home, "claude-audit")]
+             os.path.join(home, "claude-audit")] + list(extra or [])
     roots += [x for x in os.environ.get("SKYNE_EXTRA_ROOTS", "").split(os.pathsep) if x]
     return [r for r in dict.fromkeys(roots) if r and os.path.isdir(r)]
 
@@ -413,7 +502,7 @@ def owed_filings(entries, rows, session, facts, cwd="") -> list[dict]:
     owed = w_follow.unfiled_runs(runs, fil, esc)
     if owed:
         # not in the queues: has a flush already moved them to a register?
-        regs = origin_register_files(session, register_candidates(cwd))
+        regs = origin_register_files(session, register_candidates(cwd, filer_dirs(entries)))
         extra = [x for x in os.environ.get("SKYNE_EXTRA_REGISTERS", "").split(os.pathsep) if x]
         try:
             owed = w_follow.unfiled_runs(runs, w_follow.filings(session, regs + extra), esc)
@@ -481,9 +570,9 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
                 f"per finish; /handoff flushes the queue into a PR)"
                 + (", and for a red-team lens-4 run `python3 scripts/redteam_rounds.py queue ...` "
                    "for its loop (a grade row does not count for it)" if tagged else "")
-                + ". Naming the script in a command no longer counts: the row has to reach the "
-                  "queue. If a Wince run was not a graded pass, say \"no grade to file: <why>\" "
-                  "in one line.")
+                + ". Naming the script in a command does not count: the row has to reach the "
+                  "queue (or a register in a skyne checkout this session ran the writer in). "
+                  "If a Wince run was not a graded pass, say \"no grade to file: <why>\" in one line.")
             ev["triggers"].append("unfiled")
 
     # --- the agent-W trigger (as before) ----------------------------------------
@@ -523,17 +612,16 @@ def evaluate(payload: dict, log_rows: list[dict] | None = None,
         ev["satisfied"] = satisfied
         if not satisfied:
             ev["required"].append(
-                "W follow-up (Checked means passed Wince and Wren, RULED 2026-11-19): this turn has "
+                "W follow-up (Checked on the Plan board means it passed Wince and Wren): this turn has "
                 + " and ".join(why) + f", and no `wince` agent run has finished since "
                 f"{'the work was last changed' if not wren_owed else 'the work was made and Wren tried it'}. "
                 + ("Run the `wren` agent first (he tries what was made, the lazy way), then ONE "
                    "`wince` pass over the work AND Wren's report. " if wren_owed else
-                   "Run the `wince` agent (load-house-rules:wince) on the work before replying: "
+                   "Run the `wince` agent on the work before replying: "
                    "grade the OUTPUT first, work back to the process where it finds a problem. ")
                 + "A \"Wince:\" label is not a review; only a run of the agent counts. "
                   "Wince grades and names problems, it never rewrites. If the work was "
-                  "answered in a few words and nothing was made, say so plainly; the switch to "
-                  "stop these is `log` in ~/.claude/skyne/w-follow-mode.")
+                  "answered in a few words and nothing was made, say so plainly.")
     if facts["unknown_figma"]:
         ev["note_figma"] = (f"Unknown Figma tool(s) used: {', '.join(sorted(set(facts['unknown_figma'])))}. "
                             f"Classify them in .claude/hooks/figma-tools.json (write/read/excluded) "
@@ -572,7 +660,6 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
                           "triggers": sorted(set(ev["triggers"])),
                           "owed_new": bool(ev["required"]), "labeled": ev["labeled"],
                           "old_rule": ev.get("old_rule", False),
-                          "undated_checked": ev["facts"].get("undated_checked", []),
                           "claude_wrote": ev["claude_wrote"],
                           "unknown_figma": sorted(set(ev["facts"]["unknown_figma"]))})
         if ev["mode"] == "enforce" and ev["session"] and not ev["cloud"]:
@@ -582,13 +669,20 @@ def decide(payload: dict, log_rows: list[dict] | None = None,
 
 
 def main() -> int:
+    if IMPORT_ERROR is not None:
+        _raw_error_row("wince", IMPORT_ERROR)
+        return 0
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        raw = sys.stdin.read() or "{}"
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return 0            # not a hook call: nothing to judge, nothing to log
         out = decide(payload) if isinstance(payload, dict) else None
         if out:
-            print(json.dumps(out))
-    except Exception:  # noqa: BLE001 -- a gate must never cost a turn
-        pass
+            print(json.dumps(hook_output(out)))
+    except Exception as exc:  # noqa: BLE001 -- a gate must never cost a turn
+        w_follow.log_error("wince", exc)
     return 0
 
 
@@ -786,11 +880,28 @@ def self_test() -> int:
         r = subprocess.run([sys.executable, __file__], input=json.dumps(
             transcript(user, call("warden"), tool_result)), capture_output=True,
             text=True, env=env)
-        check(r.returncode == 0 and '"block"' in r.stdout and "Warden" in r.stdout,
-              "PLANTED: end to end, a block is printed as JSON and the exit is 0")
+        printed = json.loads(r.stdout or "{}")
+        ctx = (printed.get("hookSpecificOutput") or {}).get("additionalContext", "")
+        check(r.returncode == 0 and "decision" not in printed
+              and printed.get("hookSpecificOutput", {}).get("hookEventName") == "Stop"
+              and ctx.startswith("Claude owes a Wince/Wren follow-up") and "Nothing for you" in ctx
+              and "Warden" in ctx,
+              "PLANTED: end to end, a refusal is printed as Stop feedback (additionalContext, not "
+              "a 'block' hook error), opens with the plain line, and the exit is 0")
+        check(not any(x in ctx for x in ("RULED", "load-house-rules:", "w-follow-mode")),
+              "the refusal Garrett sees carries no rule numbers, plugin ids or the off switch")
         r = subprocess.run([sys.executable, __file__], input="not json",
                            capture_output=True, text=True, env=env)
         check(r.returncode == 0 and r.stdout == "", "garbage stdin exits 0, silently")
+        # a crash, or a broken import, leaves an error row the heartbeat reads (W red team round 1)
+        elog = os.path.join(d, "err.jsonl")
+        keep_log = os.environ.get("SKYNE_W_FOLLOW_LOG")
+        os.environ["SKYNE_W_FOLLOW_LOG"] = elog
+        _raw_error_row("wince", SyntaxError("bad w_follow"))
+        rows_e = read_jsonl(elog)
+        check(len(rows_e) == 1 and rows_e[0]["action"] == "error" and "SyntaxError" in rows_e[0]["error"],
+              "PLANTED: a gate that cannot import its shared module writes an error row")
+        os.environ["SKYNE_W_FOLLOW_LOG"] = keep_log
 
 
         # ================= STAGE 2 (PC): label + publish triggers, content-match filing =======
@@ -860,8 +971,16 @@ def self_test() -> int:
               "a new session re-sending a row with its OLD Checked date (Built, Live, the Used number) does not fire")
         check(go(u2, tu(2, "ArtifactData", {"action": "update", "url": "u", "collection": "features", "doc_id": "BL-1",
                                             "data": {"s": ["done", "done", "done", "done", "no", "no", "no"]}}, "nd"),
-                 says(3, "Marked it.")) is None and flog()[-1]["undated_checked"] == ["BL-1"],
-              "known blind spot: Checked with no date does not refuse, but the log names it for the heartbeat")
+                 says(3, "Marked it.")) is None and "undated_checked" not in flog()[-1],
+              "known blind spot: a write with Checked done and no date neither refuses nor logs "
+              "(it may be a Built/Live re-send of a dated row; the nightly reads the stored row)")
+        tn = "2026-11-18T03:00:%02d.000Z"        # 22:00 Eastern on 11-17: the UTC date is 11-18
+        un = {"type": "user", "timestamp": tn % 0, "message": {"content": "go"}}
+        mn = dict(mk(2, when="2026-11-18"), timestamp=tn % 2)
+        out = go(un, mn, dict(says(3, "Checked."), timestamp=tn % 3))
+        check(bool(out) and "BL-1" in out["reason"],
+              "PLANTED: a date-only Checked written as the UTC date (a day ahead of Eastern near "
+              "midnight) still fires")
         out = go(u2, mk(2, when="2026-11-17"), says(3, "Checked."))
         check(bool(out) and "BL-1" in out["reason"], "PLANTED: a date-only Checked (today, ET) fires (Wince round 3)")
         check(go(u2, mk(2, ["done", "done", "done", "no", "no", "no", "no"], when=t % 2), says(3, "Undid it.")) is None,
@@ -1012,7 +1131,34 @@ def self_test() -> int:
         check(go(*graded, says(7, "Weir: done.")) is None,
               "a filing that already reached a register (queue row dropped) still counts")
         os.environ.pop("SKYNE_EXTRA_REGISTERS", None)
+        # an `add` run in a skyne clone the gate was never told about (W red team round 1)
+        clone = os.path.join(_scratch, "scratchpad", "skyne-clone")
+        os.makedirs(os.path.join(clone, "data"))
+        with open(os.path.join(clone, "data", "wince-grades.json"), "w", encoding="utf-8") as fh:
+            json.dump({"grades": [{"session": "s1", "filed_utc": "2026-11-17T15:00:05Z"}]}, fh)
+        add_there = tu(5, "Bash", {"command": f'cd "{clone}" && python3 scripts/wince_grades.py add --subject x'}, "b9")
+        check(go(*graded, add_there, says(7, "Weir: done.")) is None,
+              "an `add` run in an unknown skyne clone (found from the command's cd) counts")
+        add_path = tu(5, "Bash", {"command": f"python3 {clone}/scripts/wince_grades.py add --subject x"}, "b9")
+        check(go(*graded, add_path, says(7, "Weir: done.")) is None,
+              "an `add` run by the clone's full script path counts")
+        check(go(*graded, tu(5, "Bash", {"command": "python3 scripts/wince_grades.py add --subject x"}, "b9"),
+                 says(7, "Weir: done.")) is not None,
+              "PLANTED: the same `add` with no way to find the clone is still refused")
         queue_row(qa, session="s1", queued_utc="2026-11-17T15:00:05Z")
+        # a Wince continued with SendMessage finishes more than once: each finish is a pass
+        twice = [stop_row("wince", "aW", "2026-11-17T15:00:04Z"), stop_row("wince", "aW", "2026-11-17T15:00:04Z"),
+                 stop_row("wince", "aW", "2026-11-17T15:00:20Z")]
+        out = go(*graded, says(21, "Weir: done."), log=twice)
+        check(bool(out) and "1 Wince grade" in out["reason"],
+              "PLANTED: a Wince that finishes again later (SendMessage) owes a second filing; the "
+              "double-registered duplicate row still counts once")
+        mark_then_continue = [u2, mk(2), says(3, "Checked.")]
+        queue_row(qa, session="s1", queued_utc="2026-11-17T15:00:06Z")
+        cont = [stop_row("wince", "aW", "2026-11-17T14:59:00Z"), stop_row("wren", "aR", "2026-11-17T15:00:03Z"),
+                stop_row("wince", "aW", "2026-11-17T15:00:04Z")]
+        check(go(*mark_then_continue, log=cont) is None,
+              "a continued Wince that re-finishes AFTER the Checked mark satisfies it (session ee79be7b)")
 
         # the switch: log mode logs the NEW triggers, the old blocks keep blocking (R10)
         def set_mode(raw):

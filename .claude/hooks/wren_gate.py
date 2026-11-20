@@ -43,10 +43,15 @@ WHAT IT DOES NOT DO (house-rules 21 point 5)
 * It proves Wren RAN after the work, never that Wren tried that thing.
 * One escape line covers every maker thing before it in the turn.
 
+HOW A REFUSAL IS SENT
+---------------------
+As Stop feedback (`hookSpecificOutput.additionalContext`), not a `block` hook
+error, opening with one plain line for Garrett: see wince_gate.py.
+
 NEVER TRAPS A SESSION
 ---------------------
 `stop_hook_active` means it already refused once this turn: it allows (and logs
-"released"). Every error path prints nothing and exits 0.
+"released"). An error prints nothing, exits 0 and writes an `error` row.
 
 Usage:
     python3 wren_gate.py             # the hook (JSON on stdin)
@@ -60,10 +65,13 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from w_ran import log_path  # noqa: E402  -- one log path
-import w_follow  # noqa: E402
 from wince_gate import (  # noqa: E402  -- one boundary rule, one way to read a run
-    agent_runs, last_user_boundary, read_jsonl)
+    IMPORT_ERROR, _raw_error_row, agent_runs, hook_output, last_user_boundary, read_jsonl)
+try:
+    from w_ran import log_path  # noqa: E402  -- one log path
+    import w_follow  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 -- recorded by main()
+    IMPORT_ERROR = IMPORT_ERROR or _exc
 
 USER = "wren"
 MAKERS = tuple(m.lower() for m in w_follow.MAKER_LABELS)
@@ -98,14 +106,13 @@ def old_rule(facts: dict) -> bool:
 def refusal(facts: dict) -> str:
     marked = sorted({fid for _, fid in facts["checked"]})
     what = [f"a Plan board feature marked Checked ({', '.join(marked)})"]
-    return (f"Wren tries what is made before it counts as Checked (RULED 2026-11-19): this turn has "
+    return (f"Wren tries what is made before it counts as Checked: this turn has "
             f"{' and '.join(what)}, and no `wren` agent run has finished since. Before replying, "
-            f"run the `wren` agent (load-house-rules:wren) on what was made: use it the way "
+            f"run the `wren` agent on what was made: use it the way "
             f"Garrett would on a lazy day -- no docs, the obvious button -- and report where it "
             f"got stuck (render_page.py gives him a look at a page). Wren reports; he never "
             f"fixes. Then ONE `wince` pass grades the work and Wren's report. If nothing made can "
-            f"be used (lore, a note), say \"nothing for Wren to try: <why>\" in one line instead. "
-            f"The switch to stop these is `log` in ~/.claude/skyne/w-follow-mode.")
+            f"be used (lore, a note), say \"nothing for Wren to try: <why>\" in one line instead.")
 
 
 def decide(payload: dict, log_rows: list[dict] | None = None, log_it: bool = True) -> dict | None:
@@ -150,13 +157,20 @@ def decide(payload: dict, log_rows: list[dict] | None = None, log_it: bool = Tru
 
 
 def main() -> int:
+    if IMPORT_ERROR is not None:
+        _raw_error_row("wren", IMPORT_ERROR)
+        return 0
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        raw = sys.stdin.read() or "{}"
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return 0            # not a hook call
         out = decide(payload) if isinstance(payload, dict) else None
         if out:
-            print(json.dumps(out))
-    except Exception:  # noqa: BLE001 -- a gate must never cost a turn
-        pass
+            print(json.dumps(hook_output(out)))
+    except Exception as exc:  # noqa: BLE001 -- a gate must never cost a turn
+        w_follow.log_error("wren", exc)
     return 0
 
 
@@ -291,8 +305,13 @@ def self_test() -> int:
         env = dict(os.environ, SKYNE_W_RUNS_LOG=os.path.join(d, "none.jsonl"))
         r = subprocess.run([sys.executable, __file__], input=json.dumps(trig),
                            capture_output=True, text=True, env=env)
-        check(r.returncode == 0 and '"block"' in r.stdout and "Wren tries what is made" in r.stdout,
-              "PLANTED: end to end, a block is printed as JSON and the exit is 0")
+        printed = json.loads(r.stdout or "{}")
+        ctx = (printed.get("hookSpecificOutput") or {}).get("additionalContext", "")
+        check(r.returncode == 0 and "decision" not in printed and "Wren tries what is made" in ctx
+              and ctx.startswith("Claude owes a Wince/Wren follow-up")
+              and not any(x in ctx for x in ("RULED", "load-house-rules:", "w-follow-mode")),
+              "PLANTED: end to end, a refusal is printed as plain Stop feedback (not a 'block' hook "
+              "error, no rule numbers or off switch) and the exit is 0")
         r = subprocess.run([sys.executable, __file__], input="not json",
                            capture_output=True, text=True, env=env)
         check(r.returncode == 0 and r.stdout == "", "garbage stdin exits 0, silently")

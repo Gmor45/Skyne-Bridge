@@ -104,14 +104,14 @@ class CheckedWatch:
     stageDates.checked to a time near the write itself, and to a value this
     session has not already written for that feature. Re-sending a row
     (Built, Live, the Used number two weeks on) carries the OLD date, so it is
-    quiet. Not seen: a Checked marked with no date (logged as undated, and the
-    next day's heartbeat counts it; the nightly copy-back flags the row
-    reviewOwed), and a re-send inside two hours of the mark from a session
-    that did not make the mark."""
+    quiet. Not seen: a Checked marked with no date (the gate cannot tell a new
+    undated mark from a re-send of a row that already has a date, so it says
+    nothing; the Plan board card and the nightly copy-back, which read the
+    STORED row, name it -- Wince 2026-11-20), and a re-send inside two hours of
+    the mark from a session that did not make the mark."""
 
     def __init__(self):
         self.sent = {}           # doc_id -> Checked date this session wrote
-        self.undated = []        # writes with Checked done and no date: logged, never enforced
 
     def marks(self, name, inp, ts: str = "") -> list:
         """Feature ids this call marks Checked. Also remembers what it wrote."""
@@ -129,15 +129,13 @@ class CheckedWatch:
             fid = str(w.get("doc_id") or "?")
             st = (data or {}).get("s")
             if not v:
-                # Claude's own writes have carried no date so far (Wince round 3: 0 of 22). A write with
-                # Checked done and no date may be a new mark or a re-send; the gate cannot tell, so it
-                # does not refuse (round 2 showed re-sends would force passes). It is logged, and the
-                # heartbeat says so the next day.
-                if isinstance(st, list) and len(st) in CHECKED_AT and st[CHECKED_AT[len(st)]] == "done":
-                    self.undated.append(fid)
+                # No date in the WRITE: a new mark or a re-send of a row that already has one (a Built,
+                # Live or Used write). The gate cannot tell, so it neither refuses nor logs (Wince
+                # 2026-11-20 reproduced the false log on BL-6); the stored row is read nightly instead.
                 continue
-            if len(str(v)) == 10:            # a date only: read it as that day in Garrett's time
-                fresh = now is None or str(v) == et_day(ts)
+            if len(str(v)) == 10:            # a date only: today in Garrett's time, or today in UTC
+                # (a date written in UTC near midnight is a day ahead of Eastern; Wince 2026-11-20)
+                fresh = now is None or str(v) in (et_day(ts), str(ts)[:10])
             else:
                 at = _when(v)
                 fresh = at is not None and (now is None or now - CHECKED_WINDOW[0] <= at <= now + CHECKED_WINDOW[1])
@@ -252,15 +250,62 @@ def now_utc() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def log_row(row: dict, path: str | None = None) -> bool:
-    path = path or log_path()
+def locked_append(path: str, line: str, wait_s: float = 2.0) -> bool:
+    """Append one whole line while holding `<path>.wlock` (O_EXCL), so two hooks
+    writing in the same instant cannot tear each other's line (seen 2026-11-20:
+    the wince and wren gates both wrote at 01:58:18Z and one row was cut in half).
+    A hook never hangs on it: after `wait_s` (or on a lock older than 10 s, a
+    crash) it writes anyway."""
+    import time
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    lk = path + ".wlock"
+    held = False
+    deadline = time.time() + wait_s
+    while not held:
+        try:
+            fd = os.open(lk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            held = True
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(lk).st_mtime > 10:
+                    os.unlink(lk)
+                    continue
+            except OSError:
+                continue
+            if time.time() > deadline:
+                break
+            time.sleep(0.02)
+        except OSError:
+            break
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(dict({"utc": now_utc()}, **row), sort_keys=True) + "\n")
+            f.write(line if line.endswith("\n") else line + "\n")
+            f.flush()
         return True
     except OSError:
         return False
+    finally:
+        if held:
+            try:
+                os.unlink(lk)
+            except OSError:
+                pass
+
+
+def log_row(row: dict, path: str | None = None) -> bool:
+    path = path or log_path()
+    return locked_append(path, json.dumps(dict({"utc": now_utc()}, **row), sort_keys=True))
+
+
+def log_error(gate: str, exc: BaseException, path: str | None = None) -> None:
+    """A gate that crashed writes an `error` row, so the heartbeat can say so
+    (W red team round 1, problem 7: a crash used to leave no trace at all)."""
+    try:
+        log_row({"gate": gate, "action": "error",
+                 "error": f"{type(exc).__name__}: {str(exc)[:200]}"}, path)
+    except Exception:                                          # noqa: BLE001
+        pass
 
 
 def read_jsonl(path: str) -> list[dict]:
@@ -400,7 +445,6 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
     labels = {m.group(1) for t in (first, last) if (m := LABEL_RX.match(t))}
     return {"first_text": first, "last_text": last, "labels": labels,
             "writes": writes, "publishes": pubs, "unknown_figma": unknown, "checked": checked,
-            "undated_checked": sorted(set(watch.undated) - {f for _, f in checked}),
             "lens4_by_call": lens4, "lens4_by_agent": agent_loop}
 
 
@@ -470,14 +514,19 @@ def session_lines(today: str | None = None) -> list[str]:
     try:
         mode, note = read_mode()
         if mode != "enforce":
-            out.append("W follow-up gates are in LOG mode (~/.claude/skyne/w-follow-mode): "
-                       "they record but refuse nothing.")
+            out.append("W follow-up gates are in LOG mode (~/.claude/skyne/w-follow-mode): the "
+                       "Checked trigger is recorded but does not refuse. The follow-up after a W "
+                       "agent run, unbacked overrules and the grade-filing check still refuse.")
         if note:
             out.append(note)
     except Exception:                                         # noqa: BLE001
         pass
     try:
         out.extend(heartbeat_lines(today))
+    except Exception:                                         # noqa: BLE001
+        pass
+    try:
+        out.extend(follow_through_lines(today))
     except Exception:                                         # noqa: BLE001
         pass
     try:
@@ -497,7 +546,8 @@ def session_lines(today: str | None = None) -> list[str]:
 def queue_lines(hours: int = 24) -> list[str]:
     out = []
     for path, label in ((grades_queue_path(), "Wince grades"), (rounds_queue_path(), "red-team rounds")):
-        rows = [r for r in read_jsonl(path) if not r.get("test")]
+        # a row whose PR is already open (flushed_in) is not waiting on a flush
+        rows = [r for r in read_jsonl(path) if not r.get("test") and not r.get("flushed_in")]
         if not rows:
             continue
         oldest = min(_ts(r.get("queued_utc")) or "9999" for r in rows)
@@ -513,14 +563,15 @@ def queue_lines(hours: int = 24) -> list[str]:
 
 
 BASELINE_LABEL_SHARE = 0.03          # DECISIONS R9: ~3% of replies carry a W label (unused since 2026-11-19; kept for old readers)
-FORCED_PASSES_ALERT = 12             # R16/R19: forced passes a day that re-open the call
 CHECKED_SINCE = "2026-11-20"         # first full ET day under the Checked-only trigger (RULED 2026-11-19)
 
 
 def heartbeat_lines(today: str | None = None) -> list[str]:
-    """Speaks only when something is wrong: a gate that did not run, or more
-    forced passes in a day than R16 allows (counted from CHECKED_SINCE, split by
-    what forced them). Quiet otherwise (the cost line is the standing readout)."""
+    """Speaks only when a gate is broken: one that did not run, or one that
+    crashed. There is NO forced-pass alarm: Garrett picked "No alarm, review at
+    day 14" (R22), and the alarm that was here counted refusals as passes (W red
+    team round 1, 2026-11-20). The cost line is the standing readout; the
+    follow-through line says how many refusals went out unchecked."""
     from w_cost import et_day, et_today, prev_day
     today = today or et_today()
     rows = [r for r in read_jsonl(log_path()) if not r.get("test")]
@@ -535,23 +586,69 @@ def heartbeat_lines(today: str | None = None) -> list[str]:
             out.append(f"{gate}_gate did not run: no w-follow.jsonl row in 24 hours while chats "
                        f"were active. The gate may not be delivered; check hook delivery.")
     yday = prev_day(today)
-    # Days before the Checked-only rule ran under the old, wide triggers: not this rule's cost
-    # (Wince 2026-11-19: the 11-19 count would have blamed Checked for 101 old-rule refusals).
-    refused = [r for r in rows if r.get("action") == "refused"
-               and et_day(str(r.get("utc"))) == yday and yday >= CHECKED_SINCE]
-    chk = sum(1 for r in refused if "checked" in (r.get("triggers") or []))
-    undated = sorted({f for r in rows if r.get("gate") == "wince" and et_day(str(r.get("utc"))) == yday
-                      for f in (r.get("undated_checked") or [])})
-    if undated and yday >= CHECKED_SINCE:
-        out.append(f"{len(undated)} Plan board {'feature was' if len(undated) == 1 else 'features were'} written "
-                   f"with Checked done and no Checked date on {yday} ({', '.join(undated[:6])}): a new mark like that "
-                   f"asks no Wince or Wren. Tell Garrett, and write stageDates.checked with every Checked mark.")
-    if len(refused) > FORCED_PASSES_ALERT:
-        out.append(f"{len(refused)} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day: "
-                   f"{chk} from a feature marked Checked, {len(refused) - chk} from a W agent run or an "
-                   f"unfiled grade. Tell Garrett and ask whether the Checked-only rule is still worth its cost.")
+    errs = [r for r in rows if r.get("action") == "error" and et_day(str(r.get("utc"))) == yday]
+    if errs:
+        gates = sorted({str(r.get("gate")) for r in errs})
+        out.append(f"{len(errs)} Wince/Wren gate crash(es) on {yday} ({', '.join(gates)}; last: "
+                   f"{errs[-1].get('error', '?')}). While a gate crashes it lets every reply through. "
+                   f"Tell Garrett in one line and fix it.")
     # The label-share watch was cut 2026-11-19: it guarded the label trigger, which is retired.
     return out
+
+
+FOLLOW_WINDOW_S = 2 * 3600     # an owed run that finished within 2 h of the release counts as done late
+
+
+def follow_through(day: str, rows: list[dict] | None = None, runs: list[dict] | None = None,
+                   grades: list[dict] | None = None) -> dict:
+    """For one Eastern day: each `released` row (a refused reply that went out
+    anyway on the second try) is checked against what happened AFTER it in the
+    same session -- the owed agent run (w_ran's log) or the owed filing (the
+    grade queue). {released, followed, unfollowed, by_gate}."""
+    from w_cost import et_day
+    import datetime as dt
+    rows = [r for r in (read_jsonl(log_path()) if rows is None else rows) if not r.get("test")]
+    if runs is None:
+        from w_ran import log_path as runs_path
+        runs = read_jsonl(runs_path())
+    grades = read_jsonl(grades_queue_path()) if grades is None else grades
+
+    def t(x):
+        try:
+            return dt.datetime.strptime(str(x)[:19], "%Y-%m-%dT%H:%M:%S").timestamp()
+        except ValueError:
+            return None
+    rel = [r for r in rows if r.get("action") == "released" and et_day(str(r.get("utc"))) == day]
+    out = {"released": len(rel), "followed": 0, "unfollowed": 0, "by_gate": {}}
+    for r in rel:
+        gate, sess, at = r.get("gate"), r.get("session_id"), t(r.get("utc"))
+        trig = set(r.get("triggers") or [])
+        if at is None:
+            continue
+        if trig and trig <= {"unfiled"}:
+            done = any(g.get("session") == sess and (t(g.get("queued_utc")) or 0) >= at
+                       for g in grades)
+        else:
+            done = any(x.get("event") == "stop" and x.get("w") == gate and x.get("session_id") == sess
+                       and at <= (t(x.get("utc")) or 0) <= at + FOLLOW_WINDOW_S for x in runs)
+        k = "followed" if done else "unfollowed"
+        out[k] += 1
+        out["by_gate"].setdefault(gate, {"followed": 0, "unfollowed": 0})[k] += 1
+    return out
+
+
+def follow_through_lines(today: str | None = None) -> list[str]:
+    """One plain line: of yesterday's refused replies that went out anyway, how
+    many were never followed by the owed Wince/Wren run or filing. Silent on a
+    day with no releases. A readout, not an alarm: the day-14 review uses it."""
+    from w_cost import et_today, prev_day
+    yday = prev_day(today or et_today())
+    ft = follow_through(yday)
+    if not ft["released"]:
+        return []
+    return [f"W follow-through, {yday}: {ft['released']} refused repl{'y' if ft['released'] == 1 else 'ies'} "
+            f"went out on the second try; {ft['unfollowed']} never got the owed Wince/Wren run or "
+            f"grade filing afterwards, {ft['followed']} did."]
 
 
 def _recent_activity(now) -> bool:
@@ -721,25 +818,71 @@ def self_test() -> int:
         lp = os.path.join(d, "wf.jsonl")
         os.environ["SKYNE_W_FOLLOW_LOG"] = lp
         with open(lp, "w", encoding="utf-8") as fh:
-            for i in range(13):
-                fh.write(json.dumps({"gate": "wince", "action": "refused", "utc": "2026-11-19T20:00:%02dZ" % i,
-                                     "triggers": ["publish"]}) + "\n")
-            for i in range(13):
+            for i in range(30):
                 fh.write(json.dumps({"gate": "wince", "action": "refused", "utc": "2026-11-21T20:00:%02dZ" % i,
-                                     "triggers": ["checked"] if i < 10 else ["agent-w"]}) + "\n")
-        forced = lambda day: [x for x in heartbeat_lines(day) if "forced" in x]
-        check(forced("2026-11-20") == [],
-              "PLANTED: old-rule refusals (before the Checked-only day) do not set off the alert (Wince round 2)")
-        with open(lp, "a", encoding="utf-8") as fh:
+                                     "triggers": ["checked"]}) + "\n")
             fh.write(json.dumps({"gate": "wince", "action": "allowed", "utc": "2026-11-21T21:00:00Z",
-                                 "undated_checked": ["CO-2"]}) + chr(10))
-        check(any("CO-2" in x and "no Checked date" in x for x in heartbeat_lines("2026-11-22")),
-              "PLANTED: a Checked written with no date is named in the next day's heartbeat (Wince round 3)")
-        hb = forced("2026-11-22")
-        check(len(hb) == 1 and "10 from a feature marked Checked, 3 from a W agent run" in hb[0],
-              "PLANTED: the alert splits Checked refusals from the ones the change did not touch")
+                                 "undated_checked": ["CO-2"]}) + "\n")
+        hb = heartbeat_lines("2026-11-22")
+        check(not any("forced" in x or "re-ask" in x or "worth its cost" in x for x in hb),
+              "30 refusals in a day raise NO mid-trial alarm (R22: 'No alarm, review at day 14')")
+        check(not any("CO-2" in x for x in hb),
+              "the gate-side undated-Checked line is gone (the nightly reads stored rows instead)")
+        log_error("wren", ValueError("boom"), lp)
+        with open(lp, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"gate": "wince", "action": "error", "utc": "2026-11-21T22:00:00Z",
+                                 "error": "ImportError: w_cost"}) + "\n")
+        check(any("gate crash" in x and "ImportError: w_cost" in x for x in heartbeat_lines("2026-11-22")),
+              "PLANTED: a gate crash logged yesterday is named in the heartbeat")
+        check(read_jsonl(lp)[-2]["action"] == "error" and "boom" in read_jsonl(lp)[-2]["error"],
+              "log_error writes an error row with the exception")
+        # follow-through: released rows matched to what came after them
+        rel = [{"gate": "wince", "action": "released", "session_id": "s1", "utc": "2026-11-21T20:00:00Z",
+                "triggers": ["checked"]},
+               {"gate": "wren", "action": "released", "session_id": "s1", "utc": "2026-11-21T20:00:00Z",
+                "triggers": ["checked"]},
+               {"gate": "wince", "action": "released", "session_id": "s2", "utc": "2026-11-21T21:00:00Z",
+                "triggers": ["unfiled"]},
+               {"gate": "wince", "action": "released", "session_id": "s3", "utc": "2026-11-21T21:00:00Z",
+                "triggers": ["unfiled"]}]
+        runs_ = [{"event": "stop", "w": "wince", "session_id": "s1", "utc": "2026-11-21T20:10:00Z"},
+                 {"event": "stop", "w": "wren", "session_id": "s1", "utc": "2026-11-21T19:59:00Z"}]
+        grades_ = [{"session": "s2", "queued_utc": "2026-11-21T21:05:00Z"}]
+        ft = follow_through("2026-11-21", rel, runs_, grades_)
+        check(ft["released"] == 4 and ft["followed"] == 2 and ft["unfollowed"] == 2
+              and ft["by_gate"]["wren"] == {"followed": 0, "unfollowed": 1},
+              "PLANTED: a release followed by the owed run (or filing) counts as followed; a Wren run "
+              "from BEFORE the release and a filing that never came count as unfollowed")
+        # torn lines: many writers at once leave whole lines
+        import threading
+        tp = os.path.join(d, "torn.jsonl")
+
+        def burst(n):
+            for i in range(40):
+                log_row({"gate": "wince", "n": n, "i": i, "pad": "x" * 3000}, tp)
+        ts = [threading.Thread(target=burst, args=(n,)) for n in range(4)]
+        [x.start() for x in ts]
+        [x.join() for x in ts]
+        with open(tp, encoding="utf-8") as fh:
+            raw = fh.read().splitlines()
+        check(len(raw) == 160 and len(read_jsonl(tp)) == 160,
+              "PLANTED: 160 log rows from 4 writers at once are all whole (the write lock)")
         os.environ.pop("SKYNE_W_FOLLOW_LOG", None)
         os.environ.pop("SKYNE_W_FOLLOW_GOLIVE", None)
+    # a broken w_follow turns both gates off; the start-up block must say so (W red team round 1)
+    import types
+    import session_start
+    real = sys.modules.get("w_follow")
+    sys.modules["w_follow"] = types.SimpleNamespace(session_lines=lambda: 1 / 0)
+    try:
+        txt = session_start.follow_block()
+    finally:
+        if real is not None:
+            sys.modules["w_follow"] = real
+        else:
+            sys.modules.pop("w_follow", None)
+    check("failed to load" in txt and "ZeroDivisionError" in txt and "may be OFF" in txt,
+          "PLANTED: a w_follow that fails to load is named in the start-up block, not swallowed")
     saved = os.environ.get("CLAUDE_CODE_REMOTE")
     os.environ["CLAUDE_CODE_REMOTE"] = "true"
     check(cloud_enforces() is False, "in the cloud the new triggers do not refuse (PC-only until confirmed)")

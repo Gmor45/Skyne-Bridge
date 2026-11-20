@@ -289,8 +289,14 @@ def follow_block():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import w_follow
         lines = w_follow.session_lines()
-    except Exception:  # noqa: BLE001 -- a readout must never cost a session start
-        return ""
+    except Exception as exc:  # noqa: BLE001 -- a readout must never cost a session start
+        # W red team round 1: both gates import w_follow, so if it breaks they stop
+        # refusing anything -- and its own heartbeat goes quiet with them. Say so here.
+        return "\n".join(["", "=== W follow-ups (Garrett cannot see this block) ===",
+                          "RELAY: tell Garrett this in your first reply, in plain words.",
+                          f"The W follow-up module failed to load ({type(exc).__name__}: "
+                          f"{str(exc)[:160]}). The Wince/Wren gates may be OFF until it is fixed.",
+                          "=== end ==="])
     if not lines:
         return ""
     return "\n".join(["", "=== W follow-ups (Garrett cannot see this block) ===",
