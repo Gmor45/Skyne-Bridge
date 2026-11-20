@@ -86,10 +86,19 @@ def row_for(payload: dict) -> dict | None:
 
 def append(row: dict, path: str | None = None) -> bool:
     path = path or log_path()
+    line = json.dumps(row, sort_keys=True)
+    try:
+        # the same short write lock as w-follow.jsonl: two agents finishing in one
+        # instant tore a line here (w-runs.jsonl, W red team round 1, 2026-11-20)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from w_follow import locked_append
+        return locked_append(path, line)
+    except Exception:  # noqa: BLE001 -- the recorder must still record
+        pass
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, sort_keys=True) + "\n")
+            f.write(line + "\n")
         return True
     except OSError:
         return False
