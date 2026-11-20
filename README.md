@@ -193,6 +193,15 @@ skyne falls into — the loop is how the buckets get BETTER."* Two pieces:
   tried what was made, the lazy way. "nothing for Wren to try:" plus a reason
   lets lore and notes through. Builds done in the main loop, not by a W, are
   not seen.
+- **Narrowed 2026-11-19: Wren and Wince fire on the Checked stage only.** A turn that marks a
+  Plan board feature Checked (an ArtifactData write) owes a Wren try and then one Wince pass;
+  a W label or a publish no longer owes anything (99 of 119 forced runs since go-live
+  included one of those, and 62 had nothing else). It fires when a write sets a fresh
+  Checked date (stageDates.checked: a full time, or today's date). Skyne's core-file checker
+  wants one for every Checked; a live row without one is copied back flagged reviewOwed.
+  Not seen: Garrett tapping Checked himself, and a Checked written with no date (logged, and
+  the next day's heartbeat names it). The trigger is Claude's own hand. Wince after a real W agent run and the grade-filing check
+  are unchanged.
 - **Research is graded too** (RULED 2026-10-17) -- `wince_gate.py` counts a
   `research` or `deep-research` skill run as a W, so Wince must follow it.
   Research questions route to the `research` skill, not to Wander: Wander

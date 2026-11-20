@@ -20,8 +20,8 @@ holds what both gates share, so there is one reading of each rule:
 
 NAMED BLIND SPOTS (told to Garrett in the pre-C message)
 --------------------------------------------------------
-* Work under a "Claude:" label is invisible to the label trigger (the SessionStart
-  share line watches for it). * Files written by subagents or by scripts are not
+* Since 2026-11-19 the trigger is a Plan board feature marked Checked, not a
+  label or a publish. Garrett tapping Checked on the board himself is not seen. * Files written by subagents or by scripts are not
   seen as writes. * Cloud: see cloud_enforces(). * A grade filed by a command that
   never reached a queue or a register is not seen, on purpose.
 
@@ -43,6 +43,117 @@ LABELS = tuple(w.capitalize() for w in FOLLOWED)        # Wistin ... Wince
 LABEL_RX = re.compile(r"^\s*(%s):\s" % "|".join(LABELS))
 MAKER_LABELS = ("Wistin", "Wick", "Ward", "Warden", "Whittle")
 WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+# RULED 2026-11-19 (Skyne DECISIONS): the automatic Wince/Wren runs fire when a turn
+# marks a Plan board feature's Checked stage done, and no longer on a W label or a
+# publish. The board's stage order lives in skyne data/plan-board/board.json; `s`
+# is positional, so the Checked index is read from the row's LENGTH: seven stages
+# (asked, decided, designed, CHECKED, built, live, used) since 2026-11-19, five
+# (decided, designed, CHECKED, built, live) before it.
+CHECKED_AT = {7: 3, 5: 2}
+BOARD_TOOL_SUFFIX = "ArtifactData"
+
+
+def _board_writes(inp: dict) -> list[dict]:
+    act = inp.get("action")
+    if act in ("set", "update"):
+        return [{"collection": inp.get("collection"), "doc_id": inp.get("doc_id"),
+                 "data": inp.get("data"), "file_path": inp.get("file_path")}]
+    if act == "batch":
+        return [w for w in inp.get("writes") or [] if isinstance(w, dict) and w.get("op") in ("set", "update")]
+    return []
+
+
+def _is_features(col) -> bool:
+    return str(col or "").split("/")[-1] == "features"
+
+
+def _write_data(w: dict):
+    """The fields a write sends: inline `data`, or the JSON file named by
+    `file_path` (Wince 2026-11-19: real batches on this board use file_path)."""
+    if isinstance(w.get("data"), dict):
+        return w["data"]
+    fp = w.get("file_path")
+    if fp:
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                d = json.load(fh)
+            return d if isinstance(d, dict) else None
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _when(v) -> float | None:
+    try:
+        t = _dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_dt.timezone.utc)
+    return t.timestamp()
+
+
+CHECKED_WINDOW = (2 * 3600, 15 * 60)   # a Checked date up to 2 h before the write, or 15 min after
+
+
+class CheckedWatch:
+    """The trigger is the Checked DATE (Wince 2026-11-19, round 2). Skyne's
+    plan_board.py check refuses Checked done without stageDates.checked, and
+    the board page writes that date on every tap, so marking Checked means
+    writing a fresh Checked date (a full time, or today's date in ET). A write fires when it sets
+    stageDates.checked to a time near the write itself, and to a value this
+    session has not already written for that feature. Re-sending a row
+    (Built, Live, the Used number two weeks on) carries the OLD date, so it is
+    quiet. Not seen: a Checked marked with no date (logged as undated, and the
+    next day's heartbeat counts it; the nightly copy-back flags the row
+    reviewOwed), and a re-send inside two hours of the mark from a session
+    that did not make the mark."""
+
+    def __init__(self):
+        self.sent = {}           # doc_id -> Checked date this session wrote
+        self.undated = []        # writes with Checked done and no date: logged, never enforced
+
+    def marks(self, name, inp, ts: str = "") -> list:
+        """Feature ids this call marks Checked. Also remembers what it wrote."""
+        if not str(name or "").endswith(BOARD_TOOL_SUFFIX) or not isinstance(inp, dict):
+            return []
+        now = _when(ts) if ts else None
+        from w_cost import et_day
+        out = []
+        for w in _board_writes(inp):
+            if not _is_features(w.get("collection")):
+                continue
+            data = _write_data(w)
+            sd = (data or {}).get("stageDates")
+            v = sd.get("checked") if isinstance(sd, dict) else None
+            fid = str(w.get("doc_id") or "?")
+            st = (data or {}).get("s")
+            if not v:
+                # Claude's own writes have carried no date so far (Wince round 3: 0 of 22). A write with
+                # Checked done and no date may be a new mark or a re-send; the gate cannot tell, so it
+                # does not refuse (round 2 showed re-sends would force passes). It is logged, and the
+                # heartbeat says so the next day.
+                if isinstance(st, list) and len(st) in CHECKED_AT and st[CHECKED_AT[len(st)]] == "done":
+                    self.undated.append(fid)
+                continue
+            if len(str(v)) == 10:            # a date only: read it as that day in Garrett's time
+                fresh = now is None or str(v) == et_day(ts)
+            else:
+                at = _when(v)
+                fresh = at is not None and (now is None or now - CHECKED_WINDOW[0] <= at <= now + CHECKED_WINDOW[1])
+            if isinstance(st, list) and len(st) in CHECKED_AT and st[CHECKED_AT[len(st)]] != "done":
+                fresh = False                # Checked set back while the old date rides along
+            if fresh and self.sent.get(fid) != v:
+                out.append(fid)
+            self.sent[fid] = v
+        return out
+
+
+def checked_marks(name, inp, watch: "CheckedWatch | None" = None, ts: str = "") -> list:
+    """Feature ids this one call marks Checked (a fresh watch: nothing known)."""
+    return (watch or CheckedWatch()).marks(name, inp, ts)
+
+
 LENS4_RX = re.compile(r"\[red-team lens 4:\s*([^\]\s][^\]]*?)\s*\]")
 
 # R12: attended cloud chats are meant to enforce like this PC, scheduled runs to
@@ -243,8 +354,15 @@ def _ts(s) -> str:
 
 def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> dict:
     """What the main loop did since Garrett's last message."""
-    texts, writes, pubs, unknown, lens4 = [], [], [], [], {}
+    texts, writes, pubs, unknown, lens4, checked = [], [], [], [], {}, []
     results = {}
+    watch = CheckedWatch()
+    for e in entries[:boundary + 1]:          # earlier turns: what Claude read or wrote on the board
+        if e.get("isSidechain") or e.get("type") != "assistant":
+            continue
+        for b in (e.get("message") or {}).get("content") or []:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                watch.marks(b.get("name"), b.get("input") or {}, _ts(e.get("timestamp")))
     for e in entries[boundary + 1:]:
         if e.get("isSidechain"):
             continue
@@ -260,6 +378,7 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
                     name, inp = b.get("name"), b.get("input") or {}
                     if name in WRITE_TOOLS:
                         writes.append(ts)
+                    checked += [(ts, fid) for fid in watch.marks(name, inp, ts)]
                     kind = classify_tool(name, inp, cfg)
                     if kind == "publish":
                         pubs.append((ts, name))
@@ -280,7 +399,8 @@ def turn_facts(entries: list[dict], boundary: int, cfg: dict | None = None) -> d
     last = texts[-1][1] if texts else ""
     labels = {m.group(1) for t in (first, last) if (m := LABEL_RX.match(t))}
     return {"first_text": first, "last_text": last, "labels": labels,
-            "writes": writes, "publishes": pubs, "unknown_figma": unknown,
+            "writes": writes, "publishes": pubs, "unknown_figma": unknown, "checked": checked,
+            "undated_checked": sorted(set(watch.undated) - {f for _, f in checked}),
             "lens4_by_call": lens4, "lens4_by_agent": agent_loop}
 
 
@@ -392,14 +512,15 @@ def queue_lines(hours: int = 24) -> list[str]:
     return out
 
 
-BASELINE_LABEL_SHARE = 0.03          # DECISIONS R9: ~3% of replies carry a W label
+BASELINE_LABEL_SHARE = 0.03          # DECISIONS R9: ~3% of replies carry a W label (unused since 2026-11-19; kept for old readers)
 FORCED_PASSES_ALERT = 12             # R16/R19: forced passes a day that re-open the call
+CHECKED_SINCE = "2026-11-20"         # first full ET day under the Checked-only trigger (RULED 2026-11-19)
 
 
 def heartbeat_lines(today: str | None = None) -> list[str]:
-    """Speaks only when something is wrong: a gate that did not run, a label share
-    under half its baseline over 7 days, or more forced passes in a day than R16
-    allows. Quiet otherwise (the cost line is the standing readout)."""
+    """Speaks only when something is wrong: a gate that did not run, or more
+    forced passes in a day than R16 allows (counted from CHECKED_SINCE, split by
+    what forced them). Quiet otherwise (the cost line is the standing readout)."""
     from w_cost import et_day, et_today, prev_day
     today = today or et_today()
     rows = [r for r in read_jsonl(log_path()) if not r.get("test")]
@@ -414,20 +535,22 @@ def heartbeat_lines(today: str | None = None) -> list[str]:
             out.append(f"{gate}_gate did not run: no w-follow.jsonl row in 24 hours while chats "
                        f"were active. The gate may not be delivered; check hook delivery.")
     yday = prev_day(today)
-    forced = sum(1 for r in rows if r.get("action") == "refused"
-                 and et_day(str(r.get("utc"))) == yday)
-    if forced > FORCED_PASSES_ALERT:
-        out.append(f"{forced} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day: "
-                   f"R13/R19 say re-ask Garrett whether to keep the triggers wide.")
-    week_ago = (now - _dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    turns = [r for r in rows if r.get("gate") == "wince" and str(r.get("utc")) >= week_ago
-             and "labeled" in r]
-    if len(turns) >= 50:
-        share = sum(1 for r in turns if r["labeled"]) / len(turns)
-        if share < BASELINE_LABEL_SHARE / 2:
-            out.append(f"Only {share * 100:.1f}% of replies carried a W label over the last 7 days "
-                       f"(baseline ~{BASELINE_LABEL_SHARE * 100:.0f}%): the label trigger may be "
-                       f"going quiet, or work is moving under 'Claude:'.")
+    # Days before the Checked-only rule ran under the old, wide triggers: not this rule's cost
+    # (Wince 2026-11-19: the 11-19 count would have blamed Checked for 101 old-rule refusals).
+    refused = [r for r in rows if r.get("action") == "refused"
+               and et_day(str(r.get("utc"))) == yday and yday >= CHECKED_SINCE]
+    chk = sum(1 for r in refused if "checked" in (r.get("triggers") or []))
+    undated = sorted({f for r in rows if r.get("gate") == "wince" and et_day(str(r.get("utc"))) == yday
+                      for f in (r.get("undated_checked") or [])})
+    if undated and yday >= CHECKED_SINCE:
+        out.append(f"{len(undated)} Plan board {'feature was' if len(undated) == 1 else 'features were'} written "
+                   f"with Checked done and no Checked date on {yday} ({', '.join(undated[:6])}): a new mark like that "
+                   f"asks no Wince or Wren. Tell Garrett, and write stageDates.checked with every Checked mark.")
+    if len(refused) > FORCED_PASSES_ALERT:
+        out.append(f"{len(refused)} forced Wince/Wren passes on {yday}, over R16's {FORCED_PASSES_ALERT} a day: "
+                   f"{chk} from a feature marked Checked, {len(refused) - chk} from a W agent run or an "
+                   f"unfiled grade. Tell Garrett and ask whether the Checked-only rule is still worth its cost.")
+    # The label-share watch was cut 2026-11-19: it guarded the label trigger, which is retired.
     return out
 
 
@@ -460,8 +583,8 @@ def review_lines(today: str | None = None) -> list[str]:
         return []
     return [f"DAY-14 REVIEW DUE: the W follow-up gates went live on {g['go_live']} (R19/R22). "
             f"Run `python3 {os.path.join(HERE, 'w_cost.py')} review` and bring Garrett the real numbers "
-            f"(runs a day, share of his tokens, Max weekly % trend), then ask: keep as is / publishes "
-            f"only / labels only / one pass. After he answers, run it with `review --done`."]
+            f"(runs a day, share of his tokens, Max weekly % trend), then ask: keep Checked-only as is / "
+            f"Wince only at Checked (no Wren) / turn the gates off. After he answers, run it with `review --done`."]
 
 
 # -------------------------------------------------------------------- self-test
@@ -595,6 +718,27 @@ def self_test() -> int:
         g["reviewed"] = True
         json.dump(g, open(gp, "w"))
         check(review_lines("2026-12-05") == [], "after the review is marked done it is silent")
+        lp = os.path.join(d, "wf.jsonl")
+        os.environ["SKYNE_W_FOLLOW_LOG"] = lp
+        with open(lp, "w", encoding="utf-8") as fh:
+            for i in range(13):
+                fh.write(json.dumps({"gate": "wince", "action": "refused", "utc": "2026-11-19T20:00:%02dZ" % i,
+                                     "triggers": ["publish"]}) + "\n")
+            for i in range(13):
+                fh.write(json.dumps({"gate": "wince", "action": "refused", "utc": "2026-11-21T20:00:%02dZ" % i,
+                                     "triggers": ["checked"] if i < 10 else ["agent-w"]}) + "\n")
+        forced = lambda day: [x for x in heartbeat_lines(day) if "forced" in x]
+        check(forced("2026-11-20") == [],
+              "PLANTED: old-rule refusals (before the Checked-only day) do not set off the alert (Wince round 2)")
+        with open(lp, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"gate": "wince", "action": "allowed", "utc": "2026-11-21T21:00:00Z",
+                                 "undated_checked": ["CO-2"]}) + chr(10))
+        check(any("CO-2" in x and "no Checked date" in x for x in heartbeat_lines("2026-11-22")),
+              "PLANTED: a Checked written with no date is named in the next day's heartbeat (Wince round 3)")
+        hb = forced("2026-11-22")
+        check(len(hb) == 1 and "10 from a feature marked Checked, 3 from a W agent run" in hb[0],
+              "PLANTED: the alert splits Checked refusals from the ones the change did not touch")
+        os.environ.pop("SKYNE_W_FOLLOW_LOG", None)
         os.environ.pop("SKYNE_W_FOLLOW_GOLIVE", None)
     saved = os.environ.get("CLAUDE_CODE_REMOTE")
     os.environ["CLAUDE_CODE_REMOTE"] = "true"
