@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""overrule_gate.py -- SubagentStop: Wince may not overrule a W without a real receipt.
+"""overrule_gate.py -- SubagentStop: Wince may not overrule a W without a real receipt,
+and may not hand back a grade without listing its grading criteria.
+
+CRITERIA (RULED 2026-11-22). Garrett: *"wince should list its grading criteria
+from now on for everything."* wince.md rule 11 says so; this is the mechanism
+(house-rules 21). A Wince reply that gives a grade (`Grade:` line) but has no
+`GRADING CRITERIA` heading is sent back once. On the second stop it passes and
+is logged to the same file as `no-criteria`. It proves the section EXISTS,
+never that the criteria are the right ones.
 
 WHY. 2026-10-12: Wince overruled Wren's own NEEDED for Exceed, quoting "pins
 already log friction" as a concession. Wren had written the opposite. Wince had
@@ -43,6 +51,13 @@ from w_ran import member  # noqa: E402
 TRIGGER = re.compile(r"\boverrul|\bI say\b|\bWince says\b", re.I)
 FENCE = re.compile(r"```overrule\s*\n(.*?)```", re.S)
 FIELDS = ("cell", "overruled", "their_words", "their_rebuttal", "evidence")
+GRADED = re.compile(r"^\s*\**\s*Grade:\s*\**\s*[A-F]", re.I | re.M)
+CRITERIA = re.compile(r"GRADING CRITERIA", re.I)
+
+
+def criteria_missing(message: str) -> bool:
+    """A graded Wince reply with no GRADING CRITERIA section (wince.md rule 11)."""
+    return bool(GRADED.search(message or "")) and not CRITERIA.search(message or "")
 
 
 def log_path() -> str:
@@ -145,11 +160,14 @@ def decide(payload: dict, entries: list | None = None) -> dict | None:
     if entries is None:
         entries = read_jsonl(str(payload.get("transcript_path") or ""))
     found = problems(msg, entries)
-    if not found:
+    no_criteria = criteria_missing(msg)
+    if not found and not no_criteria:
         return None
     if payload.get("stop_hook_active"):
+        status = "unbacked" if found else "no-criteria"
         row = {"utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-               "session_id": payload.get("session_id"), "status": "unbacked", "problems": found}
+               "session_id": payload.get("session_id"), "status": status,
+               "problems": found + (["no GRADING CRITERIA section"] if no_criteria else [])}
         try:
             os.makedirs(os.path.dirname(log_path()), exist_ok=True)
             with open(log_path(), "a", encoding="utf-8") as f:
@@ -157,6 +175,12 @@ def decide(payload: dict, entries: list | None = None) -> dict | None:
         except OSError:
             pass
         return None
+    if not found:
+        return {"decision": "block", "reason":
+                "Grading criteria check (wince.md rule 11, ruled 2026-11-22): you gave a grade with no "
+                "GRADING CRITERIA section. Right after line 2, list each criterion you graded on and what "
+                "an A looks like on it, plus the comparison you calibrate against; then score each "
+                "criterion in a table before the last two lines. The overall letter must follow from it."}
     return {"decision": "block", "reason":
             "Overrule receipt check (wince.md rule 7, ruled 2026-10-12): " + "; ".join(found)
             + ". For each verdict you overrule, add a ```overrule block with JSON: cell, "
@@ -212,6 +236,17 @@ def self_test() -> int:
           "PLANTED: the word 'overrule' with no receipt is refused")
     check(decide(stop("Wince: grade 3/5, the output holds."), entries) is None,
           "a critique with no overrule passes")
+    graded_bare = "Wince: B+\nBiggest: x.\nProblems...\nGrade: B+\nMaterial findings: 1"
+    out = decide(stop(graded_bare), entries)
+    check(bool(out) and "GRADING CRITERIA" in out["reason"],
+          "PLANTED: a graded reply with no GRADING CRITERIA section is sent back (rule 11)")
+    graded_ok = ("Wince: A-\nBiggest: x.\nGRADING CRITERIA\n- Accuracy: claims checked\n"
+                 "| Criterion | Letter |\nGrade: A-\nMaterial findings: 0")
+    check(decide(stop(graded_ok), entries) is None, "a graded reply that lists its criteria passes")
+    check(decide(stop("**Grade:** B\nGrading criteria: accuracy, clarity"), entries) is None,
+          "the criteria heading is matched in any case")
+    check(decide(stop("Wince: verdict.\n**Grade:** B\nMaterial findings: 2"), entries) is not None,
+          "PLANTED: a bold **Grade:** line with no criteria still counts as graded and is sent back")
     replay = {"cell": "exceed.wren", "overruled": "wren", "their_words": "pins already log friction",
               "their_rebuttal": "", "evidence": "x"}
     out = decide(stop(fence(replay)), entries)
@@ -247,6 +282,9 @@ def self_test() -> int:
         check(decide(stop("I overrule wren", stop_hook_active=True), entries) is None
               and read_jsonl(os.environ["SKYNE_OVERRULES_LOG"])[0]["status"] == "unbacked",
               "second stop lets Wince finish but logs the overrule as unbacked")
+        check(decide(stop(graded_bare, stop_hook_active=True), entries) is None
+              and read_jsonl(os.environ["SKYNE_OVERRULES_LOG"])[-1]["status"] == "no-criteria",
+              "second stop lets a criteria-less grade through but logs it as no-criteria")
         tp = os.path.join(d, "t.jsonl")
         with open(tp, "w", encoding="utf-8") as f:
             for e in entries:
