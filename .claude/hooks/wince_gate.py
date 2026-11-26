@@ -424,7 +424,8 @@ def agent_runs(entries: list[dict], rows: list[dict], session: str, who: str,
             for blk in (e.get("message") or {}).get("content") or []:
                 if (isinstance(blk, dict) and blk.get("type") == "tool_result"
                         and blk.get("tool_use_id") in calls
-                        and "Async agent launched" not in json.dumps(blk.get("content"))):
+                        and "Async agent launched" not in json.dumps(blk.get("content"))
+                        and not blk.get("is_error")):    # a refused or failed call is not a run (round 3)
                     call = calls[blk["tool_use_id"]]
                     m = w_follow.LENS4_RX.search(str((call.get("input") or {}).get("prompt") or ""))
                     out.append({"finish": _ts(e.get("timestamp")), "agent_id": None,
