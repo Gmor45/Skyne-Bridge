@@ -399,7 +399,8 @@ def agent_runs(entries: list[dict], rows: list[dict], session: str, who: str,
     seen, logged = set(), []
     for i, r in enumerate(rows):
         if (r.get("event") == "stop" and r.get("w") == who
-                and r.get("session_id") == session):
+                and r.get("session_id") == session
+                and r.get("last_message_chars") != 0):   # said nothing = skipped, not done (round 3)
             # (agent, finish time): a double-registered hook writes the same row twice, but a
             # continued agent (SendMessage) finishes again later and that is a new pass
             # (W red team round 1: session ee79be7b was refused although Wince had re-finished).
@@ -424,7 +425,8 @@ def agent_runs(entries: list[dict], rows: list[dict], session: str, who: str,
             for blk in (e.get("message") or {}).get("content") or []:
                 if (isinstance(blk, dict) and blk.get("type") == "tool_result"
                         and blk.get("tool_use_id") in calls
-                        and "Async agent launched" not in json.dumps(blk.get("content"))):
+                        and "Async agent launched" not in json.dumps(blk.get("content"))
+                        and not blk.get("is_error")):    # a refused or failed call is not a run (round 3)
                     call = calls[blk["tool_use_id"]]
                     m = w_follow.LENS4_RX.search(str((call.get("input") or {}).get("prompt") or ""))
                     out.append({"finish": _ts(e.get("timestamp")), "agent_id": None,
