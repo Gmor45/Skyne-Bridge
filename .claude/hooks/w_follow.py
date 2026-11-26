@@ -1274,6 +1274,28 @@ def self_test() -> int:
             os.environ.pop("SKYNE_ROUNDS_QUEUE", None)
         check(via_main["followed"] == 1,
               "PLANTED: with no grades given, the filings on Skyne's main are read: " + repr(via_main))
+        # W red team round 3 (a revert of the reader failed no test): go through the REAL reader, not a
+        # stand-in. A throwaway repo whose origin/main holds data/wince-grades.json.
+        import subprocess as _sp
+        repo = os.path.join(d, "fake-skyne")
+        os.makedirs(os.path.join(repo, "data"))
+        with open(os.path.join(repo, "data", "wince-grades.json"), "w", encoding="utf-8") as fh:
+            json.dump({"grades": [{"session": "real-reader-s9", "filed_utc": "2026-11-21T21:10:00Z"}]}, fh)
+        gitc = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        try:
+            _sp.run(["git", "init", "-q", repo], check=True, stdin=_sp.DEVNULL)
+            _sp.run(gitc + ["add", "-A"], check=True, stdin=_sp.DEVNULL)
+            _sp.run(gitc + ["commit", "-qm", "x"], check=True, stdin=_sp.DEVNULL)
+            _sp.run(gitc + ["update-ref", "refs/remotes/origin/main", "HEAD"], check=True, stdin=_sp.DEVNULL)
+            os.environ["SKYNE_DIR"] = repo
+            seen = [r.get("session") for r in main_register_rows()]
+        except (OSError, _sp.SubprocessError):
+            seen = None
+        finally:
+            os.environ.pop("SKYNE_DIR", None)
+        check(seen is not None and "real-reader-s9" in seen,
+              "PLANTED: main_register_rows itself reads data/wince-grades.json from origin/main of the "
+              "named Skyne folder (the real reader, not a stand-in): " + repr(seen)[:200])
         line = None
         G2 = globals()
         saved_ft = G2["follow_through"]
