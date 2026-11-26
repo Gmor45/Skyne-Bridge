@@ -282,13 +282,12 @@ def self_test() -> int:
                                               "content": "Agent type 'wren' could not start"}]}}]
         check(decide(transcript(user, said(1, "Here."), write(2), *wren_err, mark(5), said(6, "Marked.")), WL) is not None,
               "PLANTED: a Wren call that failed to start (is_error) is a skipped run, not done (round 3)")
-        silent = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "as", "utc": "2026-11-17T15:00:04Z",
-                   "last_message_chars": 0}]
-        check(decide(transcript(user, said(1, "Here."), write(2), mark(5), said(6, "Marked.")), WL + silent) is not None,
-              "PLANTED: a Wren stop that said nothing (0 characters) is a skipped run, not done (round 3)")
-        said_it = [dict(silent[0], last_message_chars=40)]
-        check(decide(transcript(user, said(1, "Here."), write(2), mark(5), said(6, "Marked.")), WL + said_it) is None,
-              "a Wren stop with a real report (40 characters) still counts")
+        # NOT a skipped run: a stop that logged 0 characters. Most real background runs log 0 (measured
+        # 2026-11-26: 100+ of ~130 Wince/Wren stops since go-live), so 0 is not evidence of a skip.
+        quiet = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "as", "utc": "2026-11-17T15:00:04Z",
+                  "last_message_chars": 0}]
+        check(decide(transcript(user, said(1, "Here."), write(2), mark(5), said(6, "Marked.")), WL + quiet) is None,
+              "a Wren stop that logged 0 characters still counts (the field is empty for most real runs)")
         prev = {"type": "user", "timestamp": "2026-11-17T14:59:00.000Z", "message": {"content": "build"}}
         tried = [{"event": "stop", "w": "wren", "session_id": "s1", "agent_id": "ar", "utc": "2026-11-17T14:59:30Z"}]
         check(decide(transcript(prev, tool(0, "Write", {"file_path": "a", "content": "1"}) | {"timestamp": "2026-11-17T14:59:10.000Z"},

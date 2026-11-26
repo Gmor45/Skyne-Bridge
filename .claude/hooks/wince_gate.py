@@ -399,8 +399,7 @@ def agent_runs(entries: list[dict], rows: list[dict], session: str, who: str,
     seen, logged = set(), []
     for i, r in enumerate(rows):
         if (r.get("event") == "stop" and r.get("w") == who
-                and r.get("session_id") == session
-                and r.get("last_message_chars") != 0):   # said nothing = skipped, not done (round 3)
+                and r.get("session_id") == session):
             # (agent, finish time): a double-registered hook writes the same row twice, but a
             # continued agent (SendMessage) finishes again later and that is a new pass
             # (W red team round 1: session ee79be7b was refused although Wince had re-finished).
