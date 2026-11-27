@@ -299,6 +299,25 @@ python3 .claude/hooks/no_push_to_main.py --self-test          # 42 checks
 python3 .claude/hooks/no_push_to_main.py --check "git push origin main"
 ```
 
+## And it warns before the third push to an open PR
+
+`.claude/hooks/push_count_gate.py`, a `PreToolUse` hook on `Bash`, is house
+rule 1f ("finish before you push") with a mechanism behind it. Every push to a
+branch with an open PR re-runs all of that PR's checks, and in November 2026
+that was 45% of the month's Actions minutes (1,456 of 3,624), far more than
+merging (under 1%). Before a `git push` it asks GitHub whether the branch has
+an open PR and how many earlier pushes already ran its checks; from the third
+push on it warns, naming the PR and the count. It warns rather than refuses,
+because a push that fixes a red check is the right move. It adds about one
+second per push and fails open when `gh` cannot answer. An earlier
+push-batching lane in Skyne's guardrails died because it read a log nothing
+wrote; this one asks GitHub live every time.
+
+```bash
+python3 .claude/hooks/push_count_gate.py --self-test
+python3 .claude/hooks/push_count_gate.py --check "git push origin <branch>"
+```
+
 **No override, on purpose.** There is no environment variable that switches it
 off, because Claude could set one and the gate would be decoration. The refusal
 text names the branch-and-PR path instead, so the next move is obvious.
