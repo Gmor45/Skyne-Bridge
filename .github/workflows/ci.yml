@@ -155,6 +155,8 @@ jobs:
         run: python3 .claude/hooks/shell_shapes.py --self-test
       - name: Push-count warner self-test (house-rules 1f, push once to an open PR)
         run: python3 .claude/hooks/push_count_gate.py --self-test
+      - name: Workflow-cost gate self-test (house-rules 1g, a new check pays its way)
+        run: python3 .claude/hooks/workflow_gate.py --self-test
       - name: Date-claims checker self-test (house-rules 40, incl. corpus sync)
         run: python3 .claude/hooks/date_claims.py --self-test
       - name: Ran-it checker self-test (house-rules 0, never say it works unless you ran it)

@@ -318,6 +318,29 @@ python3 .claude/hooks/push_count_gate.py --self-test
 python3 .claude/hooks/push_count_gate.py --check "git push origin <branch>"
 ```
 
+## And it refuses a workflow that would spend minutes unchecked
+
+`.claude/hooks/workflow_gate.py`, a `PreToolUse` hook on `Write|Edit|MultiEdit`,
+is house rule 1g ("a new check pays its way"). All private repos share one
+3,000-minute Actions pool a month. It refuses to save a file in
+`.github/workflows/` when the result has a `pull_request` or `push` trigger
+with no `paths:` filter, or a `schedule:` with no `ACTIONS_BRAKE` guard. One
+comment answers it when the check really must run anyway:
+`# no-paths: <why>` or `# no-brake: <why>`. It compares the file before and
+after, so editing one of the older workflows that already break a rule on
+purpose is not refused; only a break the edit adds is. It runs on plain
+`python3` with no YAML library, and fails open on any error.
+
+It cannot see a workflow written by a shell command or on GitHub's website.
+The backstop for that is the daily sweep in the `actions-collector` Worker
+(claude-usage-hud), which reads every repo's workflows and lists new breaks in
+the `actions_meter` reading.
+
+```bash
+python3 .claude/hooks/workflow_gate.py --self-test
+python3 .claude/hooks/workflow_gate.py --check .github/workflows/ci.yml
+```
+
 **No override, on purpose.** There is no environment variable that switches it
 off, because Claude could set one and the gate would be decoration. The refusal
 text names the branch-and-PR path instead, so the next move is obvious.
