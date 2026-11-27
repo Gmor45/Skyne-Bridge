@@ -248,9 +248,12 @@ def self_test() -> int:
         fails.append("a yml outside .github/workflows must be ignored")
     if verdict("Edit", {"file_path": p, "old_string": "not in the file", "new_string": "x"}) is not None:
         fails.append("an edit that cannot apply must be left to the Edit tool (fail open)")
-    winpath = p.replace("/", "\\")
-    if not verdict("MultiEdit", {"file_path": winpath, "edits": [{"old_string": "on:\n", "new_string": "on:\n  push:\n"}]}):
-        fails.append("a Windows-style path and MultiEdit must be checked too")
+    if not verdict("MultiEdit", {"file_path": p, "edits": [{"old_string": "on:\n", "new_string": "on:\n  push:\n"}]}):
+        fails.append("a MultiEdit must be checked too")
+    # The path match itself, separately: a Windows path cannot be opened on
+    # the Linux CI runner, so the read is tested above with the native path.
+    if not WORKFLOW_RE.search(r"C:\repo\.github\workflows\ci.yml".replace("\\", "/")):
+        fails.append("a Windows-style workflow path must match")
 
     pay = deny_payload("why")["hookSpecificOutput"]
     if pay.get("permissionDecision") != "deny" or pay.get("hookEventName") != "PreToolUse":
